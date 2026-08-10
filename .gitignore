@@ -1,4 +1,5 @@
 .env
+*.local.md
 node_modules/
 data/sessions/
 npm-debug.log*
