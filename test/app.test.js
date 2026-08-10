@@ -57,6 +57,62 @@ test('send-text validates input and returns a message id', async () => {
   });
 });
 
+test('send-pix validates input and returns a message id', async () => {
+  const calls = [];
+  await withServer({
+    status: () => ({}),
+    qr: () => ({}),
+    sendPix: async (...args) => {
+      calls.push(args);
+      return 'pix-123';
+    }
+  }, async (base) => {
+    const success = await fetch(`${base}/send-pix`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        phone: '5562999999999',
+        message: 'Pague usando o PIX:',
+        pix: '00020101021226820014br.gov.bcb.pix',
+        merchantName: 'Empresa Exemplo',
+        keyType: 'EVP'
+      })
+    });
+    assert.deepEqual(await success.json(), { success: true, session: 'default', messageId: 'pix-123' });
+    assert.deepEqual(calls, [[
+      '5562999999999',
+      'Pague usando o PIX:',
+      '00020101021226820014br.gov.bcb.pix',
+      'Empresa Exemplo',
+      'EVP'
+    ]]);
+
+    for (const pix of ['', 'linha 1\nlinha 2', 'x'.repeat(1025)]) {
+      const invalid = await fetch(`${base}/send-pix`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ phone: '5562999999999', message: 'PIX', pix })
+      });
+      assert.equal(invalid.status, 422);
+    }
+
+    const defaults = await fetch(`${base}/send-pix`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '5562999999999', message: 'PIX', pix: 'chave' })
+    });
+    assert.equal(defaults.status, 200);
+    assert.deepEqual(calls.at(-1), ['5562999999999', 'PIX', 'chave', 'Pix', 'EVP']);
+
+    const invalidType = await fetch(`${base}/send-pix`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '5562999999999', message: 'PIX', pix: 'chave', keyType: 'CNPJ' })
+    });
+    assert.equal(invalidType.status, 422);
+  });
+});
+
 test('named session routes reject invalid and unknown identifiers', async () => {
   await withServer({ status: () => ({}), qr: () => ({}) }, async (base) => {
     assert.equal((await fetch(`${base}/sessions/UPPER/status`)).status, 422);

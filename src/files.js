@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileTypeFromFile } from 'file-type';
+import { fileTypeFromBuffer, fileTypeFromFile } from 'file-type';
 
 export function sanitizeFilename(value) {
   if (typeof value !== 'string' || value.trim() === '') throw new Error('filename is required');
@@ -44,4 +44,51 @@ export async function validatePdfFile(inputPath, allowedRoots, maxBytes) {
     throw new Error('file content is not a PDF');
   }
   return { realPath: realFile, size: stat.size };
+}
+
+export function validateDownloadUrl(value, allowedHosts) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error('url must be a valid HTTPS URL'); }
+  if (url.protocol !== 'https:' || url.username || url.password || !allowedHosts.includes(url.hostname)) {
+    throw new Error('url must use HTTPS and an allowed download host');
+  }
+  return url;
+}
+
+export async function downloadPdf(inputUrl, allowedHosts, maxBytes, redirects = 0) {
+  const url = validateDownloadUrl(inputUrl, allowedHosts);
+  const response = await fetch(url, {
+    redirect: 'manual',
+    signal: AbortSignal.timeout(30_000),
+    headers: { accept: 'application/pdf' }
+  });
+
+  if ([301, 302, 303, 307, 308].includes(response.status)) {
+    if (redirects >= 3) throw new Error('PDF download exceeded the redirect limit');
+    const location = response.headers.get('location');
+    if (!location) throw new Error('PDF download returned an invalid redirect');
+    return downloadPdf(new URL(location, url).href, allowedHosts, maxBytes, redirects + 1);
+  }
+  if (!response.ok || !response.body) throw new Error(`PDF download failed with HTTP ${response.status}`);
+
+  const declaredSize = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declaredSize) && (declaredSize <= 0 || declaredSize > maxBytes)) {
+    throw new Error('PDF download size is outside the allowed range');
+  }
+
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of response.body) {
+    size += chunk.length;
+    if (size > maxBytes) throw new Error('PDF download size is outside the allowed range');
+    chunks.push(chunk);
+  }
+  if (size === 0) throw new Error('PDF download is empty');
+
+  const buffer = Buffer.concat(chunks, size);
+  const type = await fileTypeFromBuffer(buffer);
+  if (!type || type.mime !== 'application/pdf' || type.ext !== 'pdf') {
+    throw new Error('downloaded content is not a PDF');
+  }
+  return { buffer, size };
 }

@@ -1,8 +1,9 @@
 import express from 'express';
-import { sanitizeFilename, validatePdfFile } from './files.js';
+import { downloadPdf, sanitizeFilename, validateDownloadUrl, validatePdfFile } from './files.js';
 import { validateSessionId } from './sessions.js';
 
 const PHONE_PATTERN = /^[1-9]\d{9,14}$/;
+const PIX_KEY_TYPES = new Set(['EVP', 'EMAIL', 'PHONE', 'CPF']);
 
 function validatePhone(phone) {
   if (typeof phone !== 'string' || !PHONE_PATTERN.test(phone)) {
@@ -15,6 +16,29 @@ function validateMessage(value, name = 'message', { optional = false } = {}) {
   if (optional && (value === undefined || value === null || value === '')) return null;
   if (typeof value !== 'string' || value.trim() === '' || value.length > 4096) {
     throw new Error(`${name} must be a non-empty string up to 4096 characters`);
+  }
+  return value;
+}
+
+function validatePix(value) {
+  if (typeof value !== 'string' || value.trim() === '' || value.length > 1024 || /[\r\n]/.test(value)) {
+    throw new Error('pix must be a single non-empty line up to 1024 characters');
+  }
+  return value;
+}
+
+function validateMerchantName(value) {
+  if (value === undefined || value === null || value === '') return 'Pix';
+  if (typeof value !== 'string' || value.trim() === '' || value.length > 100 || /[\r\n]/.test(value)) {
+    throw new Error('merchantName must be a single non-empty line up to 100 characters');
+  }
+  return value;
+}
+
+function validatePixKeyType(value) {
+  if (value === undefined || value === null || value === '') return 'EVP';
+  if (typeof value !== 'string' || !PIX_KEY_TYPES.has(value)) {
+    throw new Error('keyType must be one of EVP, EMAIL, PHONE or CPF');
   }
   return value;
 }
@@ -73,9 +97,35 @@ export function createApp({ sessions, config, logger = console }) {
       const phone = validatePhone(request.body?.phone);
       const filename = sanitizeFilename(request.body?.filename);
       const caption = validateMessage(request.body?.caption, 'caption', { optional: true });
-      const pdf = await validatePdfFile(request.body?.path, config.allowedFilePaths, config.maxPdfBytes);
+      const hasPath = typeof request.body?.path === 'string' && request.body.path !== '';
+      const hasUrl = typeof request.body?.url === 'string' && request.body.url !== '';
+      if (hasPath === hasUrl) throw new Error('provide exactly one of path or url');
+      const source = hasPath
+        ? await validatePdfFile(request.body.path, config.allowedFilePaths, config.maxPdfBytes)
+        : validateDownloadUrl(request.body.url, config.allowedDownloadHosts).href;
       logger.info(`[message] session=${id} queued type=pdf queue=${queue.size + 1}`);
-      const messageId = await queue.add(() => whatsapp.sendPdf(phone, pdf, filename, caption));
+      const messageId = await queue.add(async () => {
+        const pdf = hasPath
+          ? source
+          : await downloadPdf(source, config.allowedDownloadHosts, config.maxPdfBytes);
+        return whatsapp.sendPdf(phone, pdf, filename, caption);
+      });
+      logger.info(`[message] session=${id} sent id=${messageId}`);
+      response.json({ success: true, session: id, messageId });
+    } catch (error) { next(error); }
+  };
+
+  const sendPixHandler = async (request, response, next) => {
+    try {
+      const id = sessionId(request);
+      const { whatsapp, queue } = await existingSession(sessions, id);
+      const phone = validatePhone(request.body?.phone);
+      const message = validateMessage(request.body?.message);
+      const pix = validatePix(request.body?.pix);
+      const merchantName = validateMerchantName(request.body?.merchantName);
+      const keyType = validatePixKeyType(request.body?.keyType);
+      logger.info(`[message] session=${id} queued type=pix queue=${queue.size + 1}`);
+      const messageId = await queue.add(() => whatsapp.sendPix(phone, message, pix, merchantName, keyType));
       logger.info(`[message] session=${id} sent id=${messageId}`);
       response.json({ success: true, session: id, messageId });
     } catch (error) { next(error); }
@@ -84,11 +134,13 @@ export function createApp({ sessions, config, logger = console }) {
   app.get('/status', statusHandler);
   app.get('/qr', qrHandler);
   app.post('/send-text', sendTextHandler);
+  app.post('/send-pix', sendPixHandler);
   app.post('/send-file', sendFileHandler);
 
   app.get('/sessions/:session/status', statusHandler);
   app.get('/sessions/:session/qr', qrHandler);
   app.post('/sessions/:session/send-text', sendTextHandler);
+  app.post('/sessions/:session/send-pix', sendPixHandler);
   app.post('/sessions/:session/send-file', sendFileHandler);
 
   app.use((error, _request, response, _next) => {

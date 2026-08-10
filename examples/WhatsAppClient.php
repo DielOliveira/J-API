@@ -17,6 +17,22 @@ final class WhatsAppClient
         ]);
     }
 
+    public function sendPix(
+        string $phone,
+        string $message,
+        string $pix,
+        string $merchantName = 'Pix',
+        string $keyType = 'EVP',
+    ): array {
+        return $this->post('/send-pix', [
+            'phone' => $phone,
+            'message' => $message,
+            'pix' => $pix,
+            'merchantName' => $merchantName,
+            'keyType' => $keyType,
+        ]);
+    }
+
     public function sendPdf(
         string $phone,
         string $filePath,
@@ -26,6 +42,20 @@ final class WhatsAppClient
         return $this->post('/send-file', array_filter([
             'phone' => $phone,
             'path' => $filePath,
+            'filename' => $filename,
+            'caption' => $caption,
+        ], static fn (mixed $value): bool => $value !== null));
+    }
+
+    public function sendPdfUrl(
+        string $phone,
+        string $url,
+        string $filename,
+        ?string $caption = null,
+    ): array {
+        return $this->post('/send-file', array_filter([
+            'phone' => $phone,
+            'url' => $url,
             'filename' => $filename,
             'caption' => $caption,
         ], static fn (mixed $value): bool => $value !== null));
@@ -63,4 +93,5 @@ final class WhatsAppClient
 // $whatsapp = new WhatsAppClient();
 // $financeiro = new WhatsAppClient(session: 'financeiro');
 // $whatsapp->sendText('5562999999999', 'Olá, teste.');
+// $whatsapp->sendPix('5562999999999', 'Pague usando o PIX:', '000201...');
 // $whatsapp->sendPdf('5562999999999', '/var/www/minha-app/storage/whatsapp/documento.pdf', 'documento.pdf');

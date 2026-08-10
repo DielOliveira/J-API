@@ -5,12 +5,30 @@ import pino from 'pino';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  generateWAMessageFromContent,
+  proto,
   fetchLatestWaWebVersion,
   useMultiFileAuthState
 } from '@whiskeysockets/baileys';
 
 const silentBaileysLogger = pino({ level: 'silent' });
 let waVersionPromise;
+
+function pixRelayNodes() {
+  const privacyModeTimestamp = Math.floor(Date.now() / 1000) - 77_980_457;
+  return [
+    { tag: 'bot', attrs: { biz_bot: '1' } },
+    {
+      tag: 'biz',
+      attrs: {
+        actual_actors: '2',
+        host_storage: '2',
+        privacy_mode_ts: String(privacyModeTimestamp),
+        native_flow_name: 'payment_info'
+      }
+    }
+  ];
+}
 
 async function currentWaVersion(logger) {
   waVersionPromise ??= fetchLatestWaWebVersion({}).catch((error) => {
@@ -145,9 +163,41 @@ export class WhatsAppClient {
     return result.key.id;
   }
 
+  async sendPix(phone, message, pix, merchantName, keyType) {
+    const socket = this.#readySocket();
+    const jid = `${phone}@s.whatsapp.net`;
+    const content = generateWAMessageFromContent(jid, {
+      interactiveMessage: proto.Message.InteractiveMessage.create({
+        body: { text: message },
+        nativeFlowMessage: {
+          buttons: [{
+            name: 'payment_info',
+            buttonParamsJson: JSON.stringify({
+              payment_settings: [{
+                type: 'pix_static_code',
+                pix_static_code: {
+                  merchant_name: merchantName,
+                  key: pix,
+                  key_type: keyType
+                }
+              }]
+            })
+          }],
+          messageParamsJson: '{}',
+          messageVersion: 1
+        }
+      })
+    }, { userJid: socket.user?.id });
+    await socket.relayMessage(jid, content.message, {
+      messageId: content.key.id,
+      additionalNodes: pixRelayNodes()
+    });
+    return content.key.id;
+  }
+
   async sendPdf(phone, pdf, filename, caption) {
     const result = await this.#readySocket().sendMessage(`${phone}@s.whatsapp.net`, {
-      document: { url: pdf.realPath },
+      document: pdf.buffer ?? { url: pdf.realPath },
       mimetype: 'application/pdf',
       fileName: filename,
       ...(caption ? { caption } : {})

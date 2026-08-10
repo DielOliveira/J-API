@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { sanitizeFilename, validatePdfFile } from '../src/files.js';
+import { sanitizeFilename, validateDownloadUrl, validatePdfFile } from '../src/files.js';
 
 test('filename is reduced to a safe PDF basename', () => {
   assert.equal(sanitizeFilename('../../fatura ç.pdf'), 'fatura _.pdf');
@@ -29,4 +29,14 @@ test('PDF validation blocks paths outside allowed roots', async (t) => {
   const pdf = path.join(outside, 'document.pdf');
   await fs.writeFile(pdf, Buffer.from('%PDF-1.4\n%%EOF\n'));
   await assert.rejects(validatePdfFile(pdf, [allowed], 1024), /outside/);
+});
+
+test('download URL validation requires HTTPS and an allowed host', () => {
+  const hosts = ['public-api-pay.lytex.com.br'];
+  assert.equal(
+    validateDownloadUrl('https://public-api-pay.lytex.com.br/v1/invoices/print/id', hosts).hostname,
+    hosts[0]
+  );
+  assert.throws(() => validateDownloadUrl('http://public-api-pay.lytex.com.br/file', hosts), /HTTPS/);
+  assert.throws(() => validateDownloadUrl('https://127.0.0.1/file', hosts), /allowed/);
 });

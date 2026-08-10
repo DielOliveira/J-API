@@ -29,6 +29,13 @@ export function loadConfig() {
     throw new Error('ALLOWED_FILE_PATHS entries must be absolute directories and cannot be filesystem roots');
   }
   const allowedFilePaths = configuredFilePaths.map((entry) => path.resolve(entry));
+  const allowedDownloadHosts = (process.env.ALLOWED_DOWNLOAD_HOSTS ?? 'public-api-pay.lytex.com.br')
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+  if (allowedDownloadHosts.length === 0 || allowedDownloadHosts.some((host) => !/^[a-z0-9.-]+$/.test(host))) {
+    throw new Error('ALLOWED_DOWNLOAD_HOSTS must contain valid hostnames');
+  }
 
   const sessionPath = path.resolve(process.env.SESSION_PATH ?? './data/session');
   if (sessionPath === path.parse(sessionPath).root) throw new Error('SESSION_PATH cannot be a filesystem root');
@@ -39,6 +46,7 @@ export function loadConfig() {
     sessionPath,
     maxSessions: positiveInteger('MAX_SESSIONS', 10, { max: 100 }),
     allowedFilePaths,
+    allowedDownloadHosts,
     maxPdfBytes: positiveInteger('MAX_PDF_SIZE_MB', 20) * 1024 * 1024,
     sendDelayMs: positiveInteger('SEND_DELAY_MS', 1000, { allowZero: true }),
     bodyLimit: process.env.HTTP_BODY_LIMIT ?? '32kb'

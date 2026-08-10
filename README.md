@@ -1,6 +1,6 @@
 # Local WhatsApp Service
 
-Serviço HTTP pequeno, multi-sessão e restrito a `127.0.0.1`, para envio de texto e PDF pelo WhatsApp. Usa [Baileys](https://github.com/WhiskeySockets/Baileys), sem navegador headless, banco, Redis, Docker, recebimento de mensagens ou webhooks.
+Serviço HTTP pequeno, multi-sessão e restrito a `127.0.0.1`, para envio de texto, PIX e PDF pelo WhatsApp. Usa [Baileys](https://github.com/WhiskeySockets/Baileys), sem navegador headless, banco, Redis, Docker, recebimento de mensagens ou webhooks.
 
 > **Aviso:** Baileys usa o protocolo do WhatsApp Web e não é uma API oficial da Meta. Mudanças no WhatsApp podem interromper o serviço e o uso automatizado pode ter implicações nos termos/políticas da plataforma. Não use para spam; obtenha consentimento dos destinatários. Para garantias comerciais, considere a WhatsApp Business Platform oficial.
 
@@ -33,12 +33,13 @@ PORT=3001
 SESSION_PATH=/opt/whatsapp-service/data/sessions
 MAX_SESSIONS=10
 ALLOWED_FILE_PATHS=/var/www/minha-app/storage/whatsapp
+ALLOWED_DOWNLOAD_HOSTS=public-api-pay.lytex.com.br
 MAX_PDF_SIZE_MB=20
 SEND_DELAY_MS=1000
 HTTP_BODY_LIMIT=32kb
 ```
 
-`HOST` aceita intencionalmente apenas `127.0.0.1`. Separe múltiplas raízes de arquivos com vírgula. Não configure `/` como raiz. O arquivo enviado é resolvido com `realpath`, o que também impede que symlinks escapem das raízes permitidas. O conteúdo precisa ser detectado como PDF e respeitar o limite configurado.
+`HOST` aceita intencionalmente apenas `127.0.0.1`. Separe múltiplas raízes de arquivos e hosts de download com vírgula. Não configure `/` como raiz. O arquivo enviado é resolvido com `realpath`, o que também impede que symlinks escapem das raízes permitidas. Downloads aceitam apenas HTTPS e cada redirecionamento precisa permanecer em `ALLOWED_DOWNLOAD_HOSTS`. O conteúdo precisa ser detectado como PDF e respeitar o limite configurado.
 
 `SESSION_PATH` é a raiz que conterá um subdiretório por sessão. `MAX_SESSIONS` limita conexões e criação acidental. Não publique `.env`, `data/sessions` nem os backups `*.invalid-*`; esses diretórios contêm credenciais sensíveis.
 
@@ -116,6 +117,28 @@ curl -sS -X POST http://127.0.0.1:3001/send-text \
 
 Para outra sessão, use `POST /sessions/financeiro/send-text` com o mesmo JSON.
 
+## Enviar PIX
+
+Envia o cartão nativo do PIX, com logomarca e botão **Copiar chave Pix**. `pix` deve ter uma única linha e até 1024 caracteres. `merchantName` e `keyType` são opcionais; os padrões são `Pix` e `EVP`. Os tipos aceitos são `EVP`, `EMAIL`, `PHONE` e `CPF`.
+
+```bash
+curl -sS -X POST http://127.0.0.1:3001/send-pix \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "phone":"5562999999999",
+    "message":"Pague usando o PIX:",
+    "pix":"00020101021226820014br.gov.bcb.pix...",
+    "merchantName":"Empresa Exemplo",
+    "keyType":"EVP"
+  }'
+```
+
+```json
+{"success":true,"session":"default","messageId":"..."}
+```
+
+Para outra sessão, use `POST /sessions/financeiro/send-pix` com o mesmo JSON. O cartão depende do protocolo não oficial do WhatsApp Web e deve ser testado nos aparelhos usados. Alguns clientes, especialmente o WhatsApp Web, podem não renderizar mensagens interativas enviadas por dispositivos vinculados.
+
 ## Enviar PDF
 
 O caminho refere-se ao filesystem do servidor e precisa ficar dentro de `ALLOWED_FILE_PATHS`:
@@ -131,6 +154,21 @@ curl -sS -X POST http://127.0.0.1:3001/send-file \
   }'
 ```
 
+Também é possível informar `url` no lugar de `path`. O PDF é baixado em memória dentro da fila, validado, enviado e descartado sem criar arquivo na VPS:
+
+```bash
+curl -sS -X POST http://127.0.0.1:3001/send-file \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "phone":"5562999999999",
+    "url":"https://public-api-pay.lytex.com.br/v1/invoices/print/...",
+    "filename":"boleto.pdf",
+    "caption":"Segue seu boleto."
+  }'
+```
+
+Informe exatamente um entre `path` e `url`.
+
 Os envios entram em uma fila FIFO em memória. Uma requisição aguarda seu item ser enviado e, portanto, o cliente PHP deve ter timeout suficiente. `SEND_DELAY_MS` é aplicado entre itens consecutivos. Itens ainda na fila são perdidos se o processo morrer, por decisão desta primeira versão.
 
 Cada sessão tem sua própria fila: um envio lento em `financeiro` não bloqueia `atendimento`. Para PDF em outra sessão, use `POST /sessions/financeiro/send-file`.
@@ -143,11 +181,18 @@ O exemplo em [`examples/WhatsAppClient.php`](examples/WhatsAppClient.php) oferec
 $whatsapp = new WhatsAppClient();
 $financeiro = new WhatsAppClient(session: 'financeiro');
 $whatsapp->sendText('5562999999999', 'Olá, teste.');
+$whatsapp->sendPix('5562999999999', 'Pague usando o PIX:', '000201...');
 $whatsapp->sendPdf(
     '5562999999999',
     '/var/www/minha-app/storage/whatsapp/documento.pdf',
     'documento.pdf',
     'Segue seu documento.',
+);
+$whatsapp->sendPdfUrl(
+    '5562999999999',
+    'https://public-api-pay.lytex.com.br/v1/invoices/print/...',
+    'boleto.pdf',
+    'Segue seu boleto.',
 );
 ```
 
