@@ -12,6 +12,18 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 
 const silentBaileysLogger = pino({ level: 'silent' });
+
+export function phoneCandidates(phone) {
+  const candidates = [phone];
+
+  if (phone.startsWith('55') && phone.length === 13 && phone[4] === '9') {
+    candidates.push(`${phone.slice(0, 4)}${phone.slice(5)}`);
+  } else if (phone.startsWith('55') && phone.length === 12) {
+    candidates.push(`${phone.slice(0, 4)}9${phone.slice(4)}`);
+  }
+
+  return candidates;
+}
 let waVersionPromise;
 
 function pixRelayNodes() {
@@ -158,14 +170,26 @@ export class WhatsAppClient {
     return this.#socket;
   }
 
+  async #recipientJid(phone) {
+    const socket = this.#readySocket();
+    const candidates = phoneCandidates(phone).map((candidate) => `${candidate}@s.whatsapp.net`);
+    const results = await socket.onWhatsApp(...candidates);
+    const recipient = results.find((result) => result.exists);
+
+    if (!recipient?.jid) throw new Error('Phone is not registered on WhatsApp');
+
+    return recipient.jid;
+  }
+
   async sendText(phone, message) {
-    const result = await this.#readySocket().sendMessage(`${phone}@s.whatsapp.net`, { text: message });
+    const socket = this.#readySocket();
+    const result = await socket.sendMessage(await this.#recipientJid(phone), { text: message });
     return result.key.id;
   }
 
   async sendPix(phone, message, pix, merchantName, keyType) {
     const socket = this.#readySocket();
-    const jid = `${phone}@s.whatsapp.net`;
+    const jid = await this.#recipientJid(phone);
     const content = generateWAMessageFromContent(jid, {
       interactiveMessage: proto.Message.InteractiveMessage.create({
         body: { text: message },
@@ -196,7 +220,8 @@ export class WhatsAppClient {
   }
 
   async sendPdf(phone, pdf, filename, caption) {
-    const result = await this.#readySocket().sendMessage(`${phone}@s.whatsapp.net`, {
+    const socket = this.#readySocket();
+    const result = await socket.sendMessage(await this.#recipientJid(phone), {
       document: pdf.buffer ?? { url: pdf.realPath },
       mimetype: 'application/pdf',
       fileName: filename,
