@@ -1,0 +1,22 @@
+{
+  "name": "local-whatsapp-service",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Minimal localhost-only WhatsApp sending service",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "check": "node --check src/*.js && node --test"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc13",
+    "dotenv": "17.2.1",
+    "express": "5.1.0",
+    "file-type": "21.3.4",
+    "pino": "9.9.0",
+    "qrcode": "1.5.4"
+  }
+}

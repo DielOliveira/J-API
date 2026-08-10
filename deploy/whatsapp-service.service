@@ -1,0 +1,25 @@
+[Unit]
+Description=Local WhatsApp Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=whatsapp-service
+Group=whatsapp-service
+WorkingDirectory=/opt/whatsapp-service
+EnvironmentFile=/opt/whatsapp-service/.env
+ExecStart=/usr/bin/node /opt/whatsapp-service/src/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/whatsapp-service/data/sessions
+ReadOnlyPaths=/var/www/minha-app/storage/whatsapp
+
+[Install]
+WantedBy=multi-user.target
