@@ -41,6 +41,25 @@ test('persistent queue sends in order and survives store reads', async (t) => {
   store.close();
 });
 
+test('zero disables send and contact volume limits', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'j-api-queue-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = new QueueStore(path.join(root, 'queue.sqlite'));
+  const unlimited = {
+    ...limits, maxSendsPerHour: 0, maxContactsPerHour: 0, maxSendsPerDay: 0
+  };
+  const queue = new PersistentSendQueue({
+    store, session: 'default', limits: unlimited, logger, send: async () => 'wa'
+  });
+  const first = queue.add({ type: 'text', phone: '5511111111111', payload: { message: 'one' } });
+  const second = queue.add({ type: 'text', phone: '5522222222222', payload: { message: 'two' } });
+  queue.start();
+  await eventually(() => queue.get(second.job.id)?.status === 'sent');
+  assert.equal(queue.get(first.job.id).status, 'sent');
+  await queue.close();
+  store.close();
+});
+
 test('idempotency key returns the original job', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'j-api-queue-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));

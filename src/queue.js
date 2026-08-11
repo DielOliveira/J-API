@@ -74,10 +74,16 @@ export class PersistentSendQueue {
     const { hourly, daily } = this.store.sentStats(this.session, hourStart, dayStart);
     const waits = [];
     const newHourlyContact = !this.store.contactWasSent(this.session, phone, hourStart);
-    if (hourly.messages >= this.limits.maxSendsPerHour || (newHourlyContact && hourly.contacts >= this.limits.maxContactsPerHour)) {
+    const sendsPerHourReached = this.limits.maxSendsPerHour > 0 && hourly.messages >= this.limits.maxSendsPerHour;
+    const contactsPerHourReached = this.limits.maxContactsPerHour > 0
+      && newHourlyContact
+      && hourly.contacts >= this.limits.maxContactsPerHour;
+    if (sendsPerHourReached || contactsPerHourReached) {
       waits.push((hourly.oldest + 3_600_000) - now);
     }
-    if (daily.messages >= this.limits.maxSendsPerDay) waits.push((daily.oldest + 86_400_000) - now);
+    if (this.limits.maxSendsPerDay > 0 && daily.messages >= this.limits.maxSendsPerDay) {
+      waits.push((daily.oldest + 86_400_000) - now);
+    }
     return waits.length ? Math.max(1000, ...waits) : 0;
   }
 

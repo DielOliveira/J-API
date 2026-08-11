@@ -40,10 +40,10 @@ QUEUE_DATABASE_PATH=/opt/whatsapp-service/data/queue.sqlite
 QUEUE_FILES_PATH=/opt/whatsapp-service/data/queue-files
 SEND_DELAY_MIN_MS=5000
 SEND_DELAY_MAX_MS=12000
-MAX_SENDS_PER_HOUR=60
-MAX_CONTACTS_PER_HOUR=20
-MAX_SENDS_PER_DAY=150
-MAX_QUEUE_SIZE=1000
+MAX_SENDS_PER_HOUR=0
+MAX_CONTACTS_PER_HOUR=30
+MAX_SENDS_PER_DAY=0
+MAX_QUEUE_SIZE=2000
 MAX_SEND_ATTEMPTS=5
 RETRY_BASE_MS=30000
 RETRY_MAX_MS=1800000
@@ -52,7 +52,7 @@ HTTP_BODY_LIMIT=32kb
 
 `HOST` aceita intencionalmente apenas `127.0.0.1`. Separe múltiplas raízes de arquivos e hosts de download com vírgula. Não configure `/` como raiz. O arquivo enviado é resolvido com `realpath`, o que também impede que symlinks escapem das raízes permitidas. Downloads aceitam apenas HTTPS e cada redirecionamento precisa permanecer em `ALLOWED_DOWNLOAD_HOSTS`. O conteúdo precisa ser detectado como PDF e respeitar o limite configurado.
 
-`SESSION_PATH` é a raiz que conterá um subdiretório por sessão. `MAX_SESSIONS` limita conexões e criação acidental. O banco da fila e os PDFs preparados são privados e persistem entre reinícios. Não publique `.env`, `data/sessions`, `data/queue.sqlite*`, `data/queue-files` nem os backups `*.invalid-*`.
+`SESSION_PATH` é a raiz que conterá um subdiretório por sessão. `MAX_SESSIONS` limita conexões e criação acidental. Nos limites `MAX_SENDS_PER_HOUR`, `MAX_CONTACTS_PER_HOUR` e `MAX_SENDS_PER_DAY`, o valor `0` desativa somente aquele limite. O intervalo entre envios, o tamanho máximo da fila e as retentativas continuam ativos. O banco da fila e os PDFs preparados são privados e persistem entre reinícios. Não publique `.env`, `data/sessions`, `data/queue.sqlite*`, `data/queue-files` nem os backups `*.invalid-*`.
 
 ## Primeira conexão e QR Code
 

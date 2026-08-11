@@ -65,9 +65,9 @@ export function loadConfig() {
     queueLimits: Object.freeze({
       delayMinMs,
       delayMaxMs,
-      maxSendsPerHour: positiveInteger('MAX_SENDS_PER_HOUR', 60, { max: 10_000 }),
-      maxContactsPerHour: positiveInteger('MAX_CONTACTS_PER_HOUR', 20, { max: 10_000 }),
-      maxSendsPerDay: positiveInteger('MAX_SENDS_PER_DAY', 150, { max: 100_000 }),
+      maxSendsPerHour: positiveInteger('MAX_SENDS_PER_HOUR', 60, { allowZero: true, max: 10_000 }),
+      maxContactsPerHour: positiveInteger('MAX_CONTACTS_PER_HOUR', 20, { allowZero: true, max: 10_000 }),
+      maxSendsPerDay: positiveInteger('MAX_SENDS_PER_DAY', 150, { allowZero: true, max: 100_000 }),
       maxQueueSize: positiveInteger('MAX_QUEUE_SIZE', 1000, { max: 100_000 }),
       maxAttempts: positiveInteger('MAX_SEND_ATTEMPTS', 5, { max: 100 }),
       retryBaseMs,
