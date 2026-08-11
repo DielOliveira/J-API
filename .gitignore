@@ -2,4 +2,7 @@
 *.local.md
 node_modules/
 data/sessions/
+data/session/
+data/queue.sqlite*
+data/queue-files/
 npm-debug.log*

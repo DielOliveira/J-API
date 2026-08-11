@@ -4,14 +4,28 @@ import { createApp } from '../src/app.js';
 const quietLogger = { info() {}, error() {} };
 
 async function withServer(whatsapp, run) {
-  const queue = { size: 0, add: (task) => task() };
+  let sequence = 0;
+  const jobs = new Map();
+  const queue = {
+    size: 0,
+    add: ({ type }) => {
+      const job = { id: `job-${++sequence}`, status: 'pending', type };
+      jobs.set(job.id, job);
+      return { job, duplicate: false };
+    },
+    get: (id) => jobs.get(id) ?? null,
+    list: () => [...jobs.values()]
+  };
   const sessions = {
     list: () => [{ id: 'default', ...whatsapp.status(), queue: 0 }],
     get: async (id) => id === 'default' ? { whatsapp, queue } : null
   };
   const app = createApp({
     sessions,
-    config: { bodyLimit: '2kb', allowedFilePaths: ['/tmp/allowed'], maxPdfBytes: 1024 },
+    config: {
+      bodyLimit: '2kb', allowedFilePaths: ['/tmp/allowed'], allowedDownloadHosts: ['example.com'],
+      maxPdfBytes: 1024, queueFilesPath: '/tmp/j-api-test-queue-files'
+    },
     logger: quietLogger
   });
   const server = app.listen(0, '127.0.0.1');
@@ -35,7 +49,19 @@ test('status and QR endpoints expose only public state', async () => {
   });
 });
 
-test('send-text validates input and returns a message id', async () => {
+test('queue admin panel is served with restrictive browser security headers', async () => {
+  await withServer({ status: () => ({}), qr: () => ({}) }, async (base) => {
+    const response = await fetch(`${base}/admin/queue`);
+    const html = await response.text();
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-security-policy'), /default-src 'none'/);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.match(html, /Fila de envios/);
+    assert.doesNotMatch(html, /payload|merchantName|pdfPath/);
+  });
+});
+
+test('send-text validates input and accepts a persistent job', async () => {
   await withServer({
     status: () => ({}),
     qr: () => ({}),
@@ -46,7 +72,10 @@ test('send-text validates input and returns a message id', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ phone: '5562999999999', message: 'Olá' })
     });
-    assert.deepEqual(await success.json(), { success: true, session: 'default', messageId: 'message-123' });
+    assert.equal(success.status, 202);
+    assert.deepEqual(await success.json(), {
+      success: true, session: 'default', queued: true, duplicate: false, jobId: 'job-1', status: 'pending'
+    });
 
     const invalid = await fetch(`${base}/send-text`, {
       method: 'POST',
@@ -57,15 +86,11 @@ test('send-text validates input and returns a message id', async () => {
   });
 });
 
-test('send-pix validates input and returns a message id', async () => {
-  const calls = [];
+test('send-pix validates input and accepts jobs', async () => {
   await withServer({
     status: () => ({}),
     qr: () => ({}),
-    sendPix: async (...args) => {
-      calls.push(args);
-      return 'pix-123';
-    }
+    sendPix: async () => 'pix-123'
   }, async (base) => {
     const success = await fetch(`${base}/send-pix`, {
       method: 'POST',
@@ -78,14 +103,8 @@ test('send-pix validates input and returns a message id', async () => {
         keyType: 'EVP'
       })
     });
-    assert.deepEqual(await success.json(), { success: true, session: 'default', messageId: 'pix-123' });
-    assert.deepEqual(calls, [[
-      '5562999999999',
-      'Pague usando o PIX:',
-      '00020101021226820014br.gov.bcb.pix',
-      'Empresa Exemplo',
-      'EVP'
-    ]]);
+    assert.equal(success.status, 202);
+    assert.equal((await success.json()).status, 'pending');
 
     for (const pix of ['', 'linha 1\nlinha 2', 'x'.repeat(1025)]) {
       const invalid = await fetch(`${base}/send-pix`, {
@@ -101,8 +120,7 @@ test('send-pix validates input and returns a message id', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ phone: '5562999999999', message: 'PIX', pix: 'chave' })
     });
-    assert.equal(defaults.status, 200);
-    assert.deepEqual(calls.at(-1), ['5562999999999', 'PIX', 'chave', 'Pix', 'EVP']);
+    assert.equal(defaults.status, 202);
 
     const invalidType = await fetch(`${base}/send-pix`, {
       method: 'POST',

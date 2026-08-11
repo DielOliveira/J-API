@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Minimal localhost-only WhatsApp sending service",
   "engines": {
-    "node": ">=20"
+    "node": "20.x || >=22"
   },
   "scripts": {
     "start": "node src/server.js",
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc13",
+    "better-sqlite3": "^12.11.1",
     "dotenv": "17.2.1",
     "express": "5.1.0",
     "file-type": "21.3.4",

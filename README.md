@@ -1,6 +1,6 @@
 # Local WhatsApp Service
 
-Serviço HTTP pequeno, multi-sessão e restrito a `127.0.0.1`, para envio de texto, PIX e PDF pelo WhatsApp. Usa [Baileys](https://github.com/WhiskeySockets/Baileys), sem navegador headless, banco, Redis, Docker, recebimento de mensagens ou webhooks.
+Serviço HTTP pequeno, multi-sessão e restrito a `127.0.0.1`, para envio de texto, PIX e PDF pelo WhatsApp. Usa [Baileys](https://github.com/WhiskeySockets/Baileys) e uma fila persistente SQLite, sem navegador headless, Redis, Docker, recebimento de mensagens ou webhooks.
 
 > **Aviso:** Baileys usa o protocolo do WhatsApp Web e não é uma API oficial da Meta. Mudanças no WhatsApp podem interromper o serviço e o uso automatizado pode ter implicações nos termos/políticas da plataforma. Não use para spam; obtenha consentimento dos destinatários. Para garantias comerciais, considere a WhatsApp Business Platform oficial.
 
@@ -20,7 +20,8 @@ npm ci
 cp .env.example .env
 chmod 600 .env
 mkdir -p data/sessions
-chmod 700 data/sessions
+mkdir -p data/queue-files
+chmod 700 data/sessions data/queue-files
 ```
 
 Durante desenvolvimento, se ainda não existir `package-lock.json`, execute `npm install` no lugar de `npm ci`.
@@ -35,13 +36,23 @@ MAX_SESSIONS=10
 ALLOWED_FILE_PATHS=/var/www/minha-app/storage/whatsapp
 ALLOWED_DOWNLOAD_HOSTS=public-api-pay.lytex.com.br
 MAX_PDF_SIZE_MB=20
-SEND_DELAY_MS=1000
+QUEUE_DATABASE_PATH=/opt/whatsapp-service/data/queue.sqlite
+QUEUE_FILES_PATH=/opt/whatsapp-service/data/queue-files
+SEND_DELAY_MIN_MS=5000
+SEND_DELAY_MAX_MS=12000
+MAX_SENDS_PER_HOUR=60
+MAX_CONTACTS_PER_HOUR=20
+MAX_SENDS_PER_DAY=150
+MAX_QUEUE_SIZE=1000
+MAX_SEND_ATTEMPTS=5
+RETRY_BASE_MS=30000
+RETRY_MAX_MS=1800000
 HTTP_BODY_LIMIT=32kb
 ```
 
 `HOST` aceita intencionalmente apenas `127.0.0.1`. Separe múltiplas raízes de arquivos e hosts de download com vírgula. Não configure `/` como raiz. O arquivo enviado é resolvido com `realpath`, o que também impede que symlinks escapem das raízes permitidas. Downloads aceitam apenas HTTPS e cada redirecionamento precisa permanecer em `ALLOWED_DOWNLOAD_HOSTS`. O conteúdo precisa ser detectado como PDF e respeitar o limite configurado.
 
-`SESSION_PATH` é a raiz que conterá um subdiretório por sessão. `MAX_SESSIONS` limita conexões e criação acidental. Não publique `.env`, `data/sessions` nem os backups `*.invalid-*`; esses diretórios contêm credenciais sensíveis.
+`SESSION_PATH` é a raiz que conterá um subdiretório por sessão. `MAX_SESSIONS` limita conexões e criação acidental. O banco da fila e os PDFs preparados são privados e persistem entre reinícios. Não publique `.env`, `data/sessions`, `data/queue.sqlite*`, `data/queue-files` nem os backups `*.invalid-*`.
 
 ## Primeira conexão e QR Code
 
@@ -101,6 +112,18 @@ curl -s http://127.0.0.1:3001/sessions
 
 Estados comuns: `starting`, `connecting`, `awaiting_qr`, `ready`, `disconnected`, `reconnecting`, `logged_out` e `stopped`.
 
+## Painel da fila
+
+Abra no navegador da própria máquina ou por um túnel SSH local:
+
+```text
+http://127.0.0.1:3001/admin/queue
+```
+
+O painel atualiza a cada 10 segundos, reúne todas as sessões e permite filtrar por sessão e status. Ele mostra somente metadados operacionais: telefone mascarado, tipo, horários, tentativas e último erro. Conteúdo das mensagens, chaves PIX e caminhos de PDF não são expostos.
+
+O painel segue a mesma fronteira de confiança da API e permanece disponível exclusivamente em `127.0.0.1`. Não altere o bind para expô-lo diretamente na internet.
+
 ## Enviar texto
 
 O telefone deve conter somente 10 a 15 dígitos, incluindo código do país e DDD, sem `+`, espaços ou pontuação.
@@ -112,7 +135,7 @@ curl -sS -X POST http://127.0.0.1:3001/send-text \
 ```
 
 ```json
-{"success":true,"session":"default","messageId":"..."}
+{"success":true,"session":"default","queued":true,"duplicate":false,"jobId":"...","status":"pending"}
 ```
 
 Para outra sessão, use `POST /sessions/financeiro/send-text` com o mesmo JSON.
@@ -134,7 +157,7 @@ curl -sS -X POST http://127.0.0.1:3001/send-pix \
 ```
 
 ```json
-{"success":true,"session":"default","messageId":"..."}
+{"success":true,"session":"default","queued":true,"duplicate":false,"jobId":"...","status":"pending"}
 ```
 
 Para outra sessão, use `POST /sessions/financeiro/send-pix` com o mesmo JSON. O cartão depende do protocolo não oficial do WhatsApp Web e deve ser testado nos aparelhos usados. Alguns clientes, especialmente o WhatsApp Web, podem não renderizar mensagens interativas enviadas por dispositivos vinculados.
@@ -154,7 +177,7 @@ curl -sS -X POST http://127.0.0.1:3001/send-file \
   }'
 ```
 
-Também é possível informar `url` no lugar de `path`. O PDF é baixado em memória dentro da fila, validado, enviado e descartado sem criar arquivo na VPS:
+Também é possível informar `url` no lugar de `path`. O PDF é baixado, validado e copiado para a área privada da fila antes de a requisição ser aceita:
 
 ```bash
 curl -sS -X POST http://127.0.0.1:3001/send-file \
@@ -169,7 +192,24 @@ curl -sS -X POST http://127.0.0.1:3001/send-file \
 
 Informe exatamente um entre `path` e `url`.
 
-Os envios entram em uma fila FIFO em memória. Uma requisição aguarda seu item ser enviado e, portanto, o cliente PHP deve ter timeout suficiente. `SEND_DELAY_MS` é aplicado entre itens consecutivos. Itens ainda na fila são perdidos se o processo morrer, por decisão desta primeira versão.
+Os endpoints de envio respondem HTTP 202 assim que o item é persistido. O worker envia em FIFO, aplica um intervalo aleatório e respeita os limites por hora, contatos distintos e dia. Quando um limite é atingido, os jobs permanecem pendentes. Reinícios recuperam jobs pendentes e jobs interrompidos voltam para a fila.
+
+Para impedir duplicidade quando o consumidor repetir uma requisição, envie uma chave estável:
+
+```http
+Idempotency-Key: cobranca-12345-pdf
+```
+
+Repetir a mesma chave na mesma sessão devolve HTTP 200 com o `jobId` original. Sem essa chave, toda requisição cria um job novo.
+
+Consulte a fila e um job específico:
+
+```bash
+curl -s http://127.0.0.1:3001/sessions/default/queue
+curl -s http://127.0.0.1:3001/sessions/default/queue/SEU_JOB_ID
+```
+
+Os estados são `pending`, `processing`, `sent` e `failed`. Somente `sent` possui `whatsappMessageId`. Erros temporários são tentados novamente com espera exponencial; erros definitivos e o esgotamento das tentativas deixam o job como `failed` para diagnóstico.
 
 Cada sessão tem sua própria fila: um envio lento em `financeiro` não bloqueia `atendimento`. Para PDF em outra sessão, use `POST /sessions/financeiro/send-file`.
 
@@ -203,7 +243,7 @@ O exemplo em [`deploy/whatsapp-service.service`](deploy/whatsapp-service.service
 ```bash
 sudo useradd --system --home /opt/whatsapp-service --shell /usr/sbin/nologin whatsapp-service
 sudo chown -R whatsapp-service:whatsapp-service /opt/whatsapp-service
-sudo chmod 700 /opt/whatsapp-service/data/sessions
+sudo chmod 700 /opt/whatsapp-service/data/sessions /opt/whatsapp-service/data/queue-files
 sudo cp deploy/whatsapp-service.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now whatsapp-service

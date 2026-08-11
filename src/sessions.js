@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { SendQueue } from './queue.js';
+import { PersistentSendQueue } from './queue.js';
 import { WhatsAppClient } from './whatsapp.js';
 
 const SESSION_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -16,10 +16,11 @@ export class SessionManager {
   #sessions = new Map();
   #creating = new Map();
 
-  constructor({ rootPath, maxSessions, sendDelayMs, logger = console }) {
+  constructor({ rootPath, maxSessions, store, queueLimits, logger = console }) {
     this.rootPath = rootPath;
     this.maxSessions = maxSessions;
-    this.sendDelayMs = sendDelayMs;
+    this.store = store;
+    this.queueLimits = queueLimits;
     this.logger = logger;
   }
 
@@ -64,15 +65,28 @@ export class SessionManager {
       logger: this.logger,
       logPrefix: `session=${id}`
     });
-    const entry = { whatsapp, queue: new SendQueue(this.sendDelayMs) };
+    const send = async (job, payload) => {
+      if (job.type === 'text') return whatsapp.sendText(job.phone, payload.message);
+      if (job.type === 'pix') return whatsapp.sendPix(job.phone, payload.message, payload.pix, payload.merchantName, payload.keyType);
+      if (job.type === 'pdf') {
+        const messageId = await whatsapp.sendPdf(job.phone, { realPath: payload.pdfPath }, payload.filename, payload.caption);
+        await fs.unlink(payload.pdfPath).catch(() => {});
+        return messageId;
+      }
+      throw new Error(`unsupported queued message type: ${job.type}`);
+    };
+    const entry = { whatsapp, queue: new PersistentSendQueue({
+      store: this.store, session: id, send, logger: this.logger, limits: this.queueLimits
+    }) };
     await whatsapp.start();
     this.#sessions.set(id, entry);
+    entry.queue.start();
     return entry;
   }
 
   async stop() {
     const entries = [...this.#sessions.values()];
-    for (const entry of entries) entry.queue.close();
+    await Promise.allSettled(entries.map((entry) => entry.queue.close()));
     await Promise.allSettled(entries.map((entry) => entry.whatsapp.stop()));
     this.#sessions.clear();
   }

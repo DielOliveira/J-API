@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { fileTypeFromBuffer, fileTypeFromFile } from 'file-type';
 
 export function sanitizeFilename(value) {
@@ -91,4 +92,13 @@ export async function downloadPdf(inputUrl, allowedHosts, maxBytes, redirects = 
     throw new Error('downloaded content is not a PDF');
   }
   return { buffer, size };
+}
+
+export async function stagePdf(pdf, queueFilesPath) {
+  await fs.mkdir(queueFilesPath, { recursive: true, mode: 0o700 });
+  const destination = path.join(queueFilesPath, `${randomUUID()}.pdf`);
+  if (pdf.buffer) await fs.writeFile(destination, pdf.buffer, { mode: 0o600, flag: 'wx' });
+  else await fs.copyFile(pdf.realPath, destination, fs.constants.COPYFILE_EXCL);
+  await fs.chmod(destination, 0o600);
+  return destination;
 }

@@ -1,5 +1,8 @@
 import express from 'express';
-import { downloadPdf, sanitizeFilename, validateDownloadUrl, validatePdfFile } from './files.js';
+import fs from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { queueAdminPage } from './admin.js';
+import { downloadPdf, sanitizeFilename, stagePdf, validateDownloadUrl, validatePdfFile } from './files.js';
 import { validateSessionId } from './sessions.js';
 
 const PHONE_PATTERN = /^[1-9]\d{9,14}$/;
@@ -47,6 +50,27 @@ function sessionId(request) {
   return validateSessionId(request.params.session ?? 'default');
 }
 
+function idempotencyKey(request) {
+  const value = request.get('idempotency-key');
+  if (value === undefined) return null;
+  if (value.length < 1 || value.length > 200 || /[^\x21-\x7e]/.test(value)) {
+    throw new Error('Idempotency-Key must contain 1 to 200 visible ASCII characters');
+  }
+  return value;
+}
+
+function accepted(response, id, result) {
+  response.status(result.duplicate ? 200 : 202).json({
+    success: true,
+    session: id,
+    queued: result.job.status === 'pending' || result.job.status === 'processing',
+    duplicate: result.duplicate,
+    jobId: result.job.id,
+    status: result.job.status,
+    ...(result.job.whatsappMessageId ? { messageId: result.job.whatsappMessageId } : {})
+  });
+}
+
 async function existingSession(sessions, id) {
   const entry = await sessions.get(id);
   if (!entry) throw new Error('session not found; request its QR first');
@@ -59,6 +83,17 @@ export function createApp({ sessions, config, logger = console }) {
   app.use(express.json({ limit: config.bodyLimit, strict: true }));
 
   app.get('/sessions', (_request, response) => response.json({ sessions: sessions.list() }));
+
+  app.get('/admin/queue', (_request, response) => {
+    const nonce = randomBytes(16).toString('base64');
+    response.set({
+      'Content-Security-Policy': `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; connect-src 'self'; img-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer'
+    });
+    response.type('html').send(queueAdminPage(nonce));
+  });
 
   const statusHandler = async (request, response, next) => {
     try {
@@ -83,10 +118,9 @@ export function createApp({ sessions, config, logger = console }) {
       const { whatsapp, queue } = await existingSession(sessions, id);
       const phone = validatePhone(request.body?.phone);
       const message = validateMessage(request.body?.message);
-      logger.info(`[message] session=${id} queued type=text queue=${queue.size + 1}`);
-      const messageId = await queue.add(() => whatsapp.sendText(phone, message));
-      logger.info(`[message] session=${id} sent id=${messageId}`);
-      response.json({ success: true, session: id, messageId });
+      const result = queue.add({ type: 'text', phone, payload: { message }, idempotencyKey: idempotencyKey(request) });
+      logger.info(`[message] session=${id} accepted type=text job=${result.job.id} queue=${queue.size}`);
+      accepted(response, id, result);
     } catch (error) { next(error); }
   };
 
@@ -102,16 +136,23 @@ export function createApp({ sessions, config, logger = console }) {
       if (hasPath === hasUrl) throw new Error('provide exactly one of path or url');
       const source = hasPath
         ? await validatePdfFile(request.body.path, config.allowedFilePaths, config.maxPdfBytes)
-        : validateDownloadUrl(request.body.url, config.allowedDownloadHosts).href;
-      logger.info(`[message] session=${id} queued type=pdf queue=${queue.size + 1}`);
-      const messageId = await queue.add(async () => {
-        const pdf = hasPath
-          ? source
-          : await downloadPdf(source, config.allowedDownloadHosts, config.maxPdfBytes);
-        return whatsapp.sendPdf(phone, pdf, filename, caption);
-      });
-      logger.info(`[message] session=${id} sent id=${messageId}`);
-      response.json({ success: true, session: id, messageId });
+        : await downloadPdf(
+          validateDownloadUrl(request.body.url, config.allowedDownloadHosts).href,
+          config.allowedDownloadHosts,
+          config.maxPdfBytes
+        );
+      const pdfPath = await stagePdf(source, config.queueFilesPath);
+      try {
+        const result = queue.add({
+          type: 'pdf', phone, payload: { pdfPath, filename, caption }, idempotencyKey: idempotencyKey(request)
+        });
+        if (result.duplicate) await fs.unlink(pdfPath).catch(() => {});
+        logger.info(`[message] session=${id} accepted type=pdf job=${result.job.id} queue=${queue.size}`);
+        accepted(response, id, result);
+      } catch (error) {
+        await fs.unlink(pdfPath).catch(() => {});
+        throw error;
+      }
     } catch (error) { next(error); }
   };
 
@@ -124,10 +165,11 @@ export function createApp({ sessions, config, logger = console }) {
       const pix = validatePix(request.body?.pix);
       const merchantName = validateMerchantName(request.body?.merchantName);
       const keyType = validatePixKeyType(request.body?.keyType);
-      logger.info(`[message] session=${id} queued type=pix queue=${queue.size + 1}`);
-      const messageId = await queue.add(() => whatsapp.sendPix(phone, message, pix, merchantName, keyType));
-      logger.info(`[message] session=${id} sent id=${messageId}`);
-      response.json({ success: true, session: id, messageId });
+      const result = queue.add({
+        type: 'pix', phone, payload: { message, pix, merchantName, keyType }, idempotencyKey: idempotencyKey(request)
+      });
+      logger.info(`[message] session=${id} accepted type=pix job=${result.job.id} queue=${queue.size}`);
+      accepted(response, id, result);
     } catch (error) { next(error); }
   };
 
@@ -143,11 +185,49 @@ export function createApp({ sessions, config, logger = console }) {
   app.post('/sessions/:session/send-pix', sendPixHandler);
   app.post('/sessions/:session/send-file', sendFileHandler);
 
+  app.get('/sessions/:session/queue', async (request, response, next) => {
+    try {
+      const id = sessionId(request);
+      const { queue } = await existingSession(sessions, id);
+      const rawLimit = request.query.limit ?? '100';
+      if (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > 500) throw new Error('limit must be between 1 and 500');
+      response.json({ session: id, queue: queue.list(Number(rawLimit)) });
+    } catch (error) { next(error); }
+  });
+
+  app.get('/sessions/:session/queue/:jobId', async (request, response, next) => {
+    try {
+      const id = sessionId(request);
+      const { queue } = await existingSession(sessions, id);
+      const job = queue.get(request.params.jobId);
+      if (!job) return response.status(404).json({ success: false, error: 'queue job not found' });
+      response.json({ session: id, job });
+    } catch (error) { next(error); }
+  });
+
+  app.get('/queue', async (request, response, next) => {
+    try {
+      const { queue } = await existingSession(sessions, 'default');
+      const rawLimit = request.query.limit ?? '100';
+      if (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > 500) throw new Error('limit must be between 1 and 500');
+      response.json({ session: 'default', queue: queue.list(Number(rawLimit)) });
+    } catch (error) { next(error); }
+  });
+
+  app.get('/queue/:jobId', async (request, response, next) => {
+    try {
+      const { queue } = await existingSession(sessions, 'default');
+      const job = queue.get(request.params.jobId);
+      if (!job) return response.status(404).json({ success: false, error: 'queue job not found' });
+      response.json({ session: 'default', job });
+    } catch (error) { next(error); }
+  });
+
   app.use((error, _request, response, _next) => {
     const bodyError = error.type === 'entity.too.large' || error instanceof SyntaxError;
     const unavailable = error.message === 'WhatsApp is not connected' || error.message.includes('shutting down');
     const notFound = error.message.startsWith('session not found');
-    const conflict = error.message.startsWith('maximum of');
+    const conflict = error.message.startsWith('maximum of') || error.message === 'send queue is full';
     const status = bodyError ? 400 : notFound ? 404 : conflict ? 409 : unavailable ? 503 : 422;
     logger.error(`[request] failed: ${error.message}`);
     response.status(status).json({ success: false, error: bodyError ? 'invalid request body' : error.message });

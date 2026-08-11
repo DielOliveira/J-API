@@ -39,16 +39,41 @@ export function loadConfig() {
 
   const sessionPath = path.resolve(process.env.SESSION_PATH ?? './data/session');
   if (sessionPath === path.parse(sessionPath).root) throw new Error('SESSION_PATH cannot be a filesystem root');
+  const queueDatabasePath = path.resolve(process.env.QUEUE_DATABASE_PATH ?? './data/queue.sqlite');
+  const queueFilesPath = path.resolve(process.env.QUEUE_FILES_PATH ?? './data/queue-files');
+  if (queueDatabasePath === path.parse(queueDatabasePath).root || queueFilesPath === path.parse(queueFilesPath).root) {
+    throw new Error('queue paths cannot be filesystem roots');
+  }
+
+  const delayMinMs = positiveInteger('SEND_DELAY_MIN_MS', 5000, { allowZero: true, max: 3_600_000 });
+  const delayMaxMs = positiveInteger('SEND_DELAY_MAX_MS', 12000, { allowZero: true, max: 3_600_000 });
+  if (delayMaxMs < delayMinMs) throw new Error('SEND_DELAY_MAX_MS must be greater than or equal to SEND_DELAY_MIN_MS');
+  const retryBaseMs = positiveInteger('RETRY_BASE_MS', 30_000, { max: 86_400_000 });
+  const retryMaxMs = positiveInteger('RETRY_MAX_MS', 1_800_000, { max: 86_400_000 });
+  if (retryMaxMs < retryBaseMs) throw new Error('RETRY_MAX_MS must be greater than or equal to RETRY_BASE_MS');
 
   return Object.freeze({
     host,
     port: positiveInteger('PORT', 3001, { max: 65535 }),
     sessionPath,
+    queueDatabasePath,
+    queueFilesPath,
     maxSessions: positiveInteger('MAX_SESSIONS', 10, { max: 100 }),
     allowedFilePaths,
     allowedDownloadHosts,
     maxPdfBytes: positiveInteger('MAX_PDF_SIZE_MB', 20) * 1024 * 1024,
-    sendDelayMs: positiveInteger('SEND_DELAY_MS', 1000, { allowZero: true }),
+    queueLimits: Object.freeze({
+      delayMinMs,
+      delayMaxMs,
+      maxSendsPerHour: positiveInteger('MAX_SENDS_PER_HOUR', 60, { max: 10_000 }),
+      maxContactsPerHour: positiveInteger('MAX_CONTACTS_PER_HOUR', 20, { max: 10_000 }),
+      maxSendsPerDay: positiveInteger('MAX_SENDS_PER_DAY', 150, { max: 100_000 }),
+      maxQueueSize: positiveInteger('MAX_QUEUE_SIZE', 1000, { max: 100_000 }),
+      maxAttempts: positiveInteger('MAX_SEND_ATTEMPTS', 5, { max: 100 }),
+      retryBaseMs,
+      retryMaxMs,
+      pollMs: positiveInteger('QUEUE_POLL_MS', 5000, { max: 60_000 })
+    }),
     bodyLimit: process.env.HTTP_BODY_LIMIT ?? '32kb'
   });
 }
