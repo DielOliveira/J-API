@@ -112,6 +112,15 @@ export function createApp({ sessions, config, logger = console }) {
     } catch (error) { next(error); }
   };
 
+  const logoutHandler = async (request, response, next) => {
+    try {
+      const id = sessionId(request);
+      const { whatsapp } = await existingSession(sessions, id);
+      await whatsapp.logout();
+      response.json({ success: true, session: id, connected: false });
+    } catch (error) { next(error); }
+  };
+
   const sendTextHandler = async (request, response, next) => {
     try {
       const id = sessionId(request);
@@ -175,12 +184,14 @@ export function createApp({ sessions, config, logger = console }) {
 
   app.get('/status', statusHandler);
   app.get('/qr', qrHandler);
+  app.post('/logout', logoutHandler);
   app.post('/send-text', sendTextHandler);
   app.post('/send-pix', sendPixHandler);
   app.post('/send-file', sendFileHandler);
 
   app.get('/sessions/:session/status', statusHandler);
   app.get('/sessions/:session/qr', qrHandler);
+  app.post('/sessions/:session/logout', logoutHandler);
   app.post('/sessions/:session/send-text', sendTextHandler);
   app.post('/sessions/:session/send-pix', sendPixHandler);
   app.post('/sessions/:session/send-file', sendFileHandler);

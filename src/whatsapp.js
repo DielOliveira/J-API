@@ -170,6 +170,12 @@ export class WhatsAppClient {
     return this.#socket;
   }
 
+  async logout() {
+    const socket = this.#readySocket();
+    this.logger.info(`[whatsapp]${this.logPrefix} logout requested`);
+    await socket.logout();
+  }
+
   async #recipientJid(phone) {
     const socket = this.#readySocket();
     const candidates = phoneCandidates(phone).map((candidate) => `${candidate}@s.whatsapp.net`);

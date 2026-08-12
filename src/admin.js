@@ -21,8 +21,10 @@ export function queueAdminPage(nonce) {
     .card strong { display:block; font-size:28px; margin-top:2px; }
     .sessions { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; }
     .session-card { display:flex; align-items:center; gap:9px; min-width:180px; padding:10px 13px; background:var(--paper); border:1px solid var(--line); border-radius:10px; }
+    .session-card > div { flex:1; }
     .session-card strong { font-size:13px; }
     .session-card small { display:block; color:var(--muted); }
+    .session-card button { min-height:30px; margin:0; padding:4px 8px; border-color:#d9a7a3; background:#fff; color:var(--red); font-size:12px; }
     .session-dot { width:9px; height:9px; flex:0 0 auto; border-radius:50%; background:var(--amber); }
     .session-dot.ready { background:var(--green); }
     .session-dot.logged_out,.session-dot.stopped { background:var(--red); }
@@ -53,7 +55,7 @@ export function queueAdminPage(nonce) {
     .error { max-width:280px; overflow:hidden; text-overflow:ellipsis; color:var(--red); }
     .empty { padding:42px; text-align:center; color:var(--muted); }
     footer { padding:13px 2px; color:var(--muted); font-size:12px; }
-    @media (max-width:700px) { header div { align-items:flex-start; flex-direction:column; }.cards { grid-template-columns:repeat(2,1fr); } main { padding:14px; }.controls label { flex:1; min-width:130px; } button { margin-left:0; width:100%; } }
+    @media (max-width:700px) { header div { align-items:flex-start; flex-direction:column; }.cards { grid-template-columns:repeat(2,1fr); } main { padding:14px; }.controls label { flex:1; min-width:130px; } button { margin-left:0; width:100%; }.session-card button { width:auto; } }
   </style>
 </head>
 <body>
@@ -106,7 +108,9 @@ export function queueAdminPage(nonce) {
         const dot=document.createElement('span'); dot.className='session-dot '+session.state; dot.setAttribute('aria-hidden','true');
         const text=document.createElement('div'); const name=document.createElement('strong'); name.textContent=session.id;
         const detail=document.createElement('small'); detail.textContent=(session.connected?'Conectada':'Não conectada')+' · '+session.state+' · fila '+session.queue;
-        text.append(name,detail); card.append(dot,text); container.append(card);
+        text.append(name,detail); card.append(dot,text);
+        if(session.connected) { const disconnect=document.createElement('button'); disconnect.type='button'; disconnect.textContent='Desconectar'; disconnect.addEventListener('click',()=>disconnectSession(session.id)); card.append(disconnect); }
+        container.append(card);
       }
     }
     function render() {
@@ -137,6 +141,14 @@ export function queueAdminPage(nonce) {
         byId('connection').textContent='Atualizado às '+new Intl.DateTimeFormat('pt-BR',{timeStyle:'medium'}).format(new Date());
       } catch(error) { byId('connection').textContent='Erro: '+error.message; }
       finally { state.loading=false; button.disabled=false; }
+    }
+    async function disconnectSession(session) {
+      if(!confirm('Desconectar a sessão '+session+'? Os envios dela ficarão indisponíveis até um novo vínculo por QR Code.')) return;
+      try {
+        const response=await fetch('/sessions/'+encodeURIComponent(session)+'/logout',{method:'POST'}); const result=await response.json();
+        if(!response.ok) throw new Error(result.error||'Falha ao desconectar a sessão');
+        const current=state.sessions.find((item)=>item.id===session); if(current) { current.connected=false; current.state='reconnecting'; } render(); setTimeout(load,1500);
+      } catch(error) { alert('Erro: '+error.message); }
     }
     function stopQrPolling() { if(state.qrTimer) clearTimeout(state.qrTimer); state.qrTimer=null; byId('qr-image').removeAttribute('src'); byId('qr-image').hidden=true; }
     async function loadQr(session) {

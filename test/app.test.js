@@ -63,10 +63,26 @@ test('queue admin panel is served with restrictive browser security headers', as
     assert.match(html, /Gerar QR Code/);
     assert.match(html, /Sessões do WhatsApp/);
     assert.match(html, /renderSessions/);
+    assert.match(html, /Desconectar/);
+    assert.match(html, /\/logout/);
     assert.match(html, /pattern="\[a-z0-9\]\[a-z0-9_-\]\{0,31\}"/);
     assert.match(html, /\/sessions\/.*\/qr/);
     assert.match(html, /#qr-image\[hidden\] \{ display:none; \}/);
     assert.doesNotMatch(html, /payload|merchantName|pdfPath/);
+  });
+});
+
+test('logout endpoint disconnects only the requested session', async () => {
+  let calls = 0;
+  await withServer({
+    status: () => ({ connected: true, state: 'ready', phone: null }),
+    qr: () => ({ required: false, state: 'ready' }),
+    logout: async () => { calls += 1; }
+  }, async (base) => {
+    const response = await fetch(`${base}/sessions/default/logout`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { success: true, session: 'default', connected: false });
+    assert.equal(calls, 1);
   });
 });
 
