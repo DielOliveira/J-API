@@ -87,7 +87,7 @@ export function createApp({ sessions, config, logger = console }) {
   app.get('/admin/queue', (_request, response) => {
     const nonce = randomBytes(16).toString('base64');
     response.set({
-      'Content-Security-Policy': `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; connect-src 'self'; img-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`,
+      'Content-Security-Policy': `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; connect-src 'self'; img-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`,
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer'

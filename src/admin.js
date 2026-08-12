@@ -24,6 +24,14 @@ export function queueAdminPage(nonce) {
     select,button { min-height:36px; border:1px solid #c9d4cc; border-radius:8px; background:#fff; color:var(--ink); padding:6px 10px; font:inherit; }
     button { cursor:pointer; margin-left:auto; color:#fff; border-color:var(--green); background:var(--green); font-weight:600; }
     button:disabled { opacity:.65; cursor:wait; }
+    #qr-open { margin-left:0; background:#fff; color:var(--green); }
+    dialog { width:min(430px,calc(100% - 28px)); border:0; border-radius:16px; padding:0; color:var(--ink); box-shadow:0 20px 60px #0b201680; }
+    dialog::backdrop { background:#10251b99; }
+    .qr-panel { padding:22px; text-align:center; }
+    .qr-panel h2 { margin:0 0 4px; font-size:21px; }
+    .qr-panel p { margin:0 0 16px; color:var(--muted); }
+    #qr-image { display:block; width:min(320px,100%); height:auto; margin:0 auto 14px; border:1px solid var(--line); border-radius:10px; }
+    #qr-close { margin:4px 0 0; }
     .table-wrap { overflow:auto; border:1px solid var(--line); border-top:0; border-radius:0 0 12px 12px; background:var(--paper); }
     table { width:100%; border-collapse:collapse; min-width:920px; }
     th,td { padding:11px 13px; text-align:left; border-bottom:1px solid #edf1ee; white-space:nowrap; }
@@ -49,6 +57,7 @@ export function queueAdminPage(nonce) {
     <section class="controls" aria-label="Filtros">
       <label>Sessão<select id="session-filter"><option value="">Todas</option></select></label>
       <label>Status<select id="status-filter"><option value="">Todos</option><option value="pending">Pendente</option><option value="processing">Processando</option><option value="sent">Enviada</option><option value="failed">Falha</option></select></label>
+      <button id="qr-open" type="button">Conectar WhatsApp</button>
       <button id="refresh" type="button">Atualizar agora</button>
     </section>
     <div class="table-wrap">
@@ -57,8 +66,16 @@ export function queueAdminPage(nonce) {
     </div>
     <footer>Atualização automática a cada 10 segundos · até 500 jobs recentes por sessão</footer>
   </main>
+  <dialog id="qr-dialog" aria-labelledby="qr-title">
+    <section class="qr-panel">
+      <h2 id="qr-title">Conectar WhatsApp</h2>
+      <p id="qr-status">Preparando o QR Code…</p>
+      <img id="qr-image" alt="QR Code para vincular o WhatsApp" hidden>
+      <button id="qr-close" type="button">Fechar</button>
+    </section>
+  </dialog>
   <script nonce="${nonce}">
-    const state = { jobs: [], loading: false };
+    const state = { jobs: [], sessions: [], loading: false, qrTimer: null };
     const byId = (id) => document.getElementById(id);
     const labels = { pending:'Pendente', processing:'Processando', sent:'Enviada', failed:'Falha', text:'Texto', pix:'PIX', pdf:'PDF' };
     const maskPhone = (phone) => phone.length < 8 ? '••••' : phone.slice(0,4) + '•••••' + phone.slice(-4);
@@ -84,7 +101,7 @@ export function queueAdminPage(nonce) {
       if(state.loading) return; state.loading=true; const button=byId('refresh'); button.disabled=true;
       try {
         const sessionResponse=await fetch('/sessions',{cache:'no-store'}); if(!sessionResponse.ok) throw new Error('Não foi possível carregar as sessões');
-        const {sessions}=await sessionResponse.json();
+        const {sessions}=await sessionResponse.json(); state.sessions=sessions;
         const current=byId('session-filter').value; const select=byId('session-filter'); select.replaceChildren(new Option('Todas',''));
         for(const session of sessions) select.add(new Option(session.id,session.id)); select.value=current;
         const responses=await Promise.all(sessions.map(async(session)=>{const response=await fetch('/sessions/'+encodeURIComponent(session.id)+'/queue?limit=500',{cache:'no-store'}); if(!response.ok) throw new Error('Falha ao consultar '+session.id); return (await response.json()).queue;}));
@@ -93,7 +110,22 @@ export function queueAdminPage(nonce) {
       } catch(error) { byId('connection').textContent='Erro: '+error.message; }
       finally { state.loading=false; button.disabled=false; }
     }
+    function selectedSession() { return byId('session-filter').value || state.sessions[0]?.id || 'default'; }
+    function stopQrPolling() { if(state.qrTimer) clearTimeout(state.qrTimer); state.qrTimer=null; byId('qr-image').removeAttribute('src'); byId('qr-image').hidden=true; }
+    async function loadQr(session) {
+      if(!byId('qr-dialog').open) return;
+      try {
+        const response=await fetch('/sessions/'+encodeURIComponent(session)+'/qr',{cache:'no-store'});
+        const result=await response.json(); if(!response.ok && response.status!==202) throw new Error(result.error||'Falha ao gerar QR Code');
+        if(!result.required) { byId('qr-status').textContent='A sessão '+session+' já está conectada.'; stopQrPolling(); await load(); return; }
+        if(result.dataUrl) { byId('qr-image').src=result.dataUrl; byId('qr-image').hidden=false; byId('qr-status').textContent='No celular, leia o código para conectar a sessão '+session+'.'; }
+        else { byId('qr-status').textContent='Preparando o QR Code da sessão '+session+'…'; }
+        state.qrTimer=setTimeout(()=>loadQr(session),3000);
+      } catch(error) { byId('qr-status').textContent='Erro: '+error.message; state.qrTimer=setTimeout(()=>loadQr(session),5000); }
+    }
+    function openQr() { stopQrPolling(); const session=selectedSession(); byId('qr-title').textContent='Conectar · '+session; byId('qr-status').textContent='Preparando o QR Code…'; byId('qr-dialog').showModal(); loadQr(session); }
     byId('session-filter').addEventListener('change',render); byId('status-filter').addEventListener('change',render); byId('refresh').addEventListener('click',load);
+    byId('qr-open').addEventListener('click',openQr); byId('qr-close').addEventListener('click',()=>byId('qr-dialog').close()); byId('qr-dialog').addEventListener('close',stopQrPolling);
     load(); setInterval(load,10000);
   </script>
 </body></html>`;
