@@ -19,6 +19,13 @@ export function queueAdminPage(nonce) {
     .card { background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:15px 17px; box-shadow:0 2px 8px #13251b0a; }
     .card span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
     .card strong { display:block; font-size:28px; margin-top:2px; }
+    .sessions { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; }
+    .session-card { display:flex; align-items:center; gap:9px; min-width:180px; padding:10px 13px; background:var(--paper); border:1px solid var(--line); border-radius:10px; }
+    .session-card strong { font-size:13px; }
+    .session-card small { display:block; color:var(--muted); }
+    .session-dot { width:9px; height:9px; flex:0 0 auto; border-radius:50%; background:var(--amber); }
+    .session-dot.ready { background:var(--green); }
+    .session-dot.logged_out,.session-dot.stopped { background:var(--red); }
     .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:end; padding:14px; background:var(--paper); border:1px solid var(--line); border-radius:12px 12px 0 0; }
     label { display:grid; gap:4px; color:var(--muted); font-size:12px; }
     select,input,button { min-height:36px; border:1px solid #c9d4cc; border-radius:8px; background:#fff; color:var(--ink); padding:6px 10px; font:inherit; }
@@ -58,6 +65,7 @@ export function queueAdminPage(nonce) {
       <article class="card"><span>Enviadas</span><strong id="count-sent">0</strong></article>
       <article class="card"><span>Falhas</span><strong id="count-failed">0</strong></article>
     </section>
+    <section class="sessions" id="sessions" aria-label="Sessões do WhatsApp"></section>
     <section class="controls" aria-label="Filtros">
       <label>Sessão<select id="session-filter"><option value="">Todas</option></select></label>
       <label>Status<select id="status-filter"><option value="">Todos</option><option value="pending">Pendente</option><option value="processing">Processando</option><option value="sent">Enviada</option><option value="failed">Falha</option></select></label>
@@ -91,7 +99,18 @@ export function queueAdminPage(nonce) {
     const date = (value) => value ? new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'medium'}).format(new Date(value)) : '—';
 
     function cell(row, value, className) { const td=document.createElement('td'); td.textContent=value; if(className) td.className=className; row.append(td); return td; }
+    function renderSessions() {
+      const container=byId('sessions'); container.replaceChildren();
+      for(const session of state.sessions) {
+        const card=document.createElement('article'); card.className='session-card';
+        const dot=document.createElement('span'); dot.className='session-dot '+session.state; dot.setAttribute('aria-hidden','true');
+        const text=document.createElement('div'); const name=document.createElement('strong'); name.textContent=session.id;
+        const detail=document.createElement('small'); detail.textContent=(session.connected?'Conectada':'Não conectada')+' · '+session.state+' · fila '+session.queue;
+        text.append(name,detail); card.append(dot,text); container.append(card);
+      }
+    }
     function render() {
+      renderSessions();
       for (const status of ['pending','processing','sent','failed']) byId('count-'+status).textContent=state.jobs.filter((job)=>job.status===status).length;
       const session=byId('session-filter').value, status=byId('status-filter').value;
       const jobs=state.jobs.filter((job)=>(!session||job.session===session)&&(!status||job.status===status));

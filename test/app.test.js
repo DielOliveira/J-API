@@ -61,6 +61,8 @@ test('queue admin panel is served with restrictive browser security headers', as
     assert.match(html, /Conectar WhatsApp/);
     assert.match(html, /Nome da sessão/);
     assert.match(html, /Gerar QR Code/);
+    assert.match(html, /Sessões do WhatsApp/);
+    assert.match(html, /renderSessions/);
     assert.match(html, /pattern="\[a-z0-9\]\[a-z0-9_-\]\{0,31\}"/);
     assert.match(html, /\/sessions\/.*\/qr/);
     assert.match(html, /#qr-image\[hidden\] \{ display:none; \}/);
