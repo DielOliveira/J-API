@@ -31,6 +31,7 @@ export function queueAdminPage(nonce) {
     .qr-panel h2 { margin:0 0 4px; font-size:21px; }
     .qr-panel p { margin:0 0 16px; color:var(--muted); }
     #qr-image { display:block; width:min(320px,100%); height:auto; margin:0 auto 14px; border:1px solid var(--line); border-radius:10px; }
+    #qr-image[hidden] { display:none; }
     #qr-close { margin:4px 0 0; }
     .table-wrap { overflow:auto; border:1px solid var(--line); border-top:0; border-radius:0 0 12px 12px; background:var(--paper); }
     table { width:100%; border-collapse:collapse; min-width:920px; }

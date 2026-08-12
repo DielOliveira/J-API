@@ -60,6 +60,7 @@ test('queue admin panel is served with restrictive browser security headers', as
     assert.match(html, /Fila de envios/);
     assert.match(html, /Conectar WhatsApp/);
     assert.match(html, /\/sessions\/.*\/qr/);
+    assert.match(html, /#qr-image\[hidden\] \{ display:none; \}/);
     assert.doesNotMatch(html, /payload|merchantName|pdfPath/);
   });
 });
