@@ -21,7 +21,7 @@ export function queueAdminPage(nonce) {
     .card strong { display:block; font-size:28px; margin-top:2px; }
     .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:end; padding:14px; background:var(--paper); border:1px solid var(--line); border-radius:12px 12px 0 0; }
     label { display:grid; gap:4px; color:var(--muted); font-size:12px; }
-    select,button { min-height:36px; border:1px solid #c9d4cc; border-radius:8px; background:#fff; color:var(--ink); padding:6px 10px; font:inherit; }
+    select,input,button { min-height:36px; border:1px solid #c9d4cc; border-radius:8px; background:#fff; color:var(--ink); padding:6px 10px; font:inherit; }
     button { cursor:pointer; margin-left:auto; color:#fff; border-color:var(--green); background:var(--green); font-weight:600; }
     button:disabled { opacity:.65; cursor:wait; }
     #qr-open { margin-left:0; background:#fff; color:var(--green); }
@@ -30,9 +30,12 @@ export function queueAdminPage(nonce) {
     .qr-panel { padding:22px; text-align:center; }
     .qr-panel h2 { margin:0 0 4px; font-size:21px; }
     .qr-panel p { margin:0 0 16px; color:var(--muted); }
+    .qr-session { display:grid; gap:5px; margin:0 0 14px; text-align:left; color:var(--muted); font-size:12px; }
+    .qr-session input { width:100%; color:var(--ink); font-size:14px; }
+    .qr-actions { display:flex; gap:8px; justify-content:center; }
+    .qr-actions button { margin:0; }
     #qr-image { display:block; width:min(320px,100%); height:auto; margin:0 auto 14px; border:1px solid var(--line); border-radius:10px; }
     #qr-image[hidden] { display:none; }
-    #qr-close { margin:4px 0 0; }
     .table-wrap { overflow:auto; border:1px solid var(--line); border-top:0; border-radius:0 0 12px 12px; background:var(--paper); }
     table { width:100%; border-collapse:collapse; min-width:920px; }
     th,td { padding:11px 13px; text-align:left; border-bottom:1px solid #edf1ee; white-space:nowrap; }
@@ -70,9 +73,14 @@ export function queueAdminPage(nonce) {
   <dialog id="qr-dialog" aria-labelledby="qr-title">
     <section class="qr-panel">
       <h2 id="qr-title">Conectar WhatsApp</h2>
-      <p id="qr-status">Preparando o QR Code…</p>
+      <p id="qr-status">Informe um nome novo para criar outra sessão.</p>
+      <form id="qr-form">
+        <label class="qr-session">Nome da sessão
+          <input id="qr-session" name="session" required maxlength="32" pattern="[a-z0-9][a-z0-9_-]{0,31}" autocomplete="off" spellcheck="false" placeholder="Ex.: financeiro">
+        </label>
+        <div class="qr-actions"><button id="qr-generate" type="submit">Gerar QR Code</button><button id="qr-close" type="button">Fechar</button></div>
+      </form>
       <img id="qr-image" alt="QR Code para vincular o WhatsApp" hidden>
-      <button id="qr-close" type="button">Fechar</button>
     </section>
   </dialog>
   <script nonce="${nonce}">
@@ -111,7 +119,6 @@ export function queueAdminPage(nonce) {
       } catch(error) { byId('connection').textContent='Erro: '+error.message; }
       finally { state.loading=false; button.disabled=false; }
     }
-    function selectedSession() { return byId('session-filter').value || state.sessions[0]?.id || 'default'; }
     function stopQrPolling() { if(state.qrTimer) clearTimeout(state.qrTimer); state.qrTimer=null; byId('qr-image').removeAttribute('src'); byId('qr-image').hidden=true; }
     async function loadQr(session) {
       if(!byId('qr-dialog').open) return;
@@ -124,9 +131,13 @@ export function queueAdminPage(nonce) {
         state.qrTimer=setTimeout(()=>loadQr(session),3000);
       } catch(error) { byId('qr-status').textContent='Erro: '+error.message; state.qrTimer=setTimeout(()=>loadQr(session),5000); }
     }
-    function openQr() { stopQrPolling(); const session=selectedSession(); byId('qr-title').textContent='Conectar · '+session; byId('qr-status').textContent='Preparando o QR Code…'; byId('qr-dialog').showModal(); loadQr(session); }
+    function beginQr() {
+      stopQrPolling(); const input=byId('qr-session'); if(!input.reportValidity()) return;
+      const session=input.value; byId('qr-title').textContent='Conectar · '+session; byId('qr-status').textContent='Preparando o QR Code da sessão '+session+'…'; loadQr(session);
+    }
+    function openQr() { stopQrPolling(); byId('qr-title').textContent='Conectar WhatsApp'; byId('qr-status').textContent='Use um nome novo para criar outra sessão ou informe uma sessão existente.'; byId('qr-session').value=byId('session-filter').value; byId('qr-dialog').showModal(); byId('qr-session').focus(); }
     byId('session-filter').addEventListener('change',render); byId('status-filter').addEventListener('change',render); byId('refresh').addEventListener('click',load);
-    byId('qr-open').addEventListener('click',openQr); byId('qr-close').addEventListener('click',()=>byId('qr-dialog').close()); byId('qr-dialog').addEventListener('close',stopQrPolling);
+    byId('qr-open').addEventListener('click',openQr); byId('qr-form').addEventListener('submit',(event)=>{event.preventDefault(); beginQr();}); byId('qr-close').addEventListener('click',()=>byId('qr-dialog').close()); byId('qr-dialog').addEventListener('close',stopQrPolling);
     load(); setInterval(load,10000);
   </script>
 </body></html>`;

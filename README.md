@@ -120,7 +120,7 @@ Abra no navegador da própria máquina ou por um túnel SSH local:
 http://127.0.0.1:3001/admin/queue
 ```
 
-O painel atualiza a cada 10 segundos, reúne todas as sessões e permite filtrar por sessão e status. O botão **Conectar WhatsApp** solicita e atualiza o QR Code da sessão selecionada (ou da primeira sessão quando o filtro estiver em **Todas**) até que o vínculo seja concluído. Ele mostra somente metadados operacionais: telefone mascarado, tipo, horários, tentativas e último erro. Conteúdo das mensagens, chaves PIX e caminhos de PDF não são expostos.
+O painel atualiza a cada 10 segundos, reúne todas as sessões e permite filtrar por sessão e status. No botão **Conectar WhatsApp**, informe um nome novo para criar outra sessão (por exemplo, `financeiro`) ou o nome de uma sessão existente. O painel solicita e atualiza o QR Code até que o vínculo seja concluído. Ele mostra somente metadados operacionais: telefone mascarado, tipo, horários, tentativas e último erro. Conteúdo das mensagens, chaves PIX e caminhos de PDF não são expostos.
 
 O painel segue a mesma fronteira de confiança da API e permanece disponível exclusivamente em `127.0.0.1`. Não altere o bind para expô-lo diretamente na internet.
 

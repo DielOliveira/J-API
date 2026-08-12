@@ -59,6 +59,9 @@ test('queue admin panel is served with restrictive browser security headers', as
     assert.match(response.headers.get('content-security-policy'), /img-src data:/);
     assert.match(html, /Fila de envios/);
     assert.match(html, /Conectar WhatsApp/);
+    assert.match(html, /Nome da sessão/);
+    assert.match(html, /Gerar QR Code/);
+    assert.match(html, /pattern="\[a-z0-9\]\[a-z0-9_-\]\{0,31\}"/);
     assert.match(html, /\/sessions\/.*\/qr/);
     assert.match(html, /#qr-image\[hidden\] \{ display:none; \}/);
     assert.doesNotMatch(html, /payload|merchantName|pdfPath/);
