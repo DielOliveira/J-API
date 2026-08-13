@@ -77,6 +77,22 @@ async function existingSession(sessions, id) {
   return entry;
 }
 
+function queueList(request, queue) {
+  const { start, end } = request.query;
+  if (start !== undefined || end !== undefined) {
+    if (!/^\d+$/.test(start ?? '') || !/^\d+$/.test(end ?? '')) throw new Error('start and end must be timestamps in milliseconds');
+    const startAt = Number(start);
+    const endAt = Number(end);
+    if (!Number.isSafeInteger(startAt) || !Number.isSafeInteger(endAt) || endAt <= startAt || endAt - startAt > 31 * 86_400_000) {
+      throw new Error('date range must be valid and no longer than 31 days');
+    }
+    return queue.listBetween(startAt, endAt);
+  }
+  const rawLimit = request.query.limit ?? '100';
+  if (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > 500) throw new Error('limit must be between 1 and 500');
+  return queue.list(Number(rawLimit));
+}
+
 export function createApp({ sessions, config, logger = console }) {
   const app = express();
   app.disable('x-powered-by');
@@ -200,9 +216,7 @@ export function createApp({ sessions, config, logger = console }) {
     try {
       const id = sessionId(request);
       const { queue } = await existingSession(sessions, id);
-      const rawLimit = request.query.limit ?? '100';
-      if (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > 500) throw new Error('limit must be between 1 and 500');
-      response.json({ session: id, queue: queue.list(Number(rawLimit)) });
+      response.json({ session: id, queue: queueList(request, queue) });
     } catch (error) { next(error); }
   });
 
@@ -219,9 +233,7 @@ export function createApp({ sessions, config, logger = console }) {
   app.get('/queue', async (request, response, next) => {
     try {
       const { queue } = await existingSession(sessions, 'default');
-      const rawLimit = request.query.limit ?? '100';
-      if (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > 500) throw new Error('limit must be between 1 and 500');
-      response.json({ session: 'default', queue: queue.list(Number(rawLimit)) });
+      response.json({ session: 'default', queue: queueList(request, queue) });
     } catch (error) { next(error); }
   });
 

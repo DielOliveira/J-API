@@ -43,6 +43,10 @@ export class PersistentSendQueue {
     return this.store.list(this.session, limit);
   }
 
+  listBetween(start, end) {
+    return this.store.listBetween(this.session, start, end);
+  }
+
   start() {
     this.#wake();
   }

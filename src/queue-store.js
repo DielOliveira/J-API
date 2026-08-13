@@ -65,6 +65,12 @@ export class QueueStore {
     return this.database.prepare(`SELECT ${PUBLIC_COLUMNS} FROM jobs WHERE session = ? ORDER BY created_at DESC LIMIT ?`).all(session, limit);
   }
 
+  listBetween(session, start, end) {
+    return this.database.prepare(`SELECT ${PUBLIC_COLUMNS} FROM jobs
+      WHERE session = ? AND created_at >= ? AND created_at < ?
+      ORDER BY created_at DESC`).all(session, start, end);
+  }
+
   countActive(session) {
     return this.database.prepare("SELECT count(*) AS total FROM jobs WHERE session = ? AND status IN ('pending', 'processing')").get(session).total;
   }

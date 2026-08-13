@@ -14,7 +14,8 @@ async function withServer(whatsapp, run) {
       return { job, duplicate: false };
     },
     get: (id) => jobs.get(id) ?? null,
-    list: () => [...jobs.values()]
+    list: () => [...jobs.values()],
+    listBetween: (start, end) => [...jobs.values()].filter((job) => job.createdAt >= start && job.createdAt < end)
   };
   const sessions = {
     list: () => [{ id: 'default', ...whatsapp.status(), queue: 0 }],
@@ -62,6 +63,8 @@ test('queue admin panel is served with restrictive browser security headers', as
     assert.match(html, /Nome da sessão/);
     assert.match(html, /Gerar QR Code/);
     assert.match(html, /Sessões do WhatsApp/);
+    assert.match(html, /id="date-filter" type="date"/);
+    assert.match(html, /localDateValue/);
     assert.match(html, /renderSessions/);
     assert.match(html, /Desconectar/);
     assert.match(html, /\/logout/);
@@ -69,6 +72,16 @@ test('queue admin panel is served with restrictive browser security headers', as
     assert.match(html, /\/sessions\/.*\/qr/);
     assert.match(html, /#qr-image\[hidden\] \{ display:none; \}/);
     assert.doesNotMatch(html, /payload|merchantName|pdfPath/);
+  });
+});
+
+test('queue endpoint accepts a bounded date range', async () => {
+  await withServer({ status: () => ({}), qr: () => ({}) }, async (base) => {
+    const response = await fetch(`${base}/queue?start=1000&end=2000`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { session: 'default', queue: [] });
+    assert.equal((await fetch(`${base}/queue?start=1000`)).status, 422);
+    assert.equal((await fetch(`${base}/queue?start=1000&end=${1000 + 32 * 86_400_000}`)).status, 422);
   });
 });
 

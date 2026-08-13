@@ -73,6 +73,17 @@ test('idempotency key returns the original job', async (t) => {
   store.close();
 });
 
+test('queue lists all jobs created inside a date range', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'j-api-queue-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = new QueueStore(path.join(root, 'queue.sqlite'));
+  for (const [id, createdAt] of [['before', 999], ['inside', 1000], ['after', 2000]]) {
+    store.enqueue({ id, session: 'default', type: 'text', phone: '5511111111111', payload: { message: id }, createdAt });
+  }
+  assert.deepEqual(store.listBetween('default', 1000, 2000).map((job) => job.id), ['inside']);
+  store.close();
+});
+
 test('temporary failures are retried without a new enqueue', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'j-api-queue-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));

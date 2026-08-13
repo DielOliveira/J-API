@@ -15,6 +15,8 @@ export function queueAdminPage(nonce) {
     header p { margin:0; color:#cce0d5; }
     #connection { font-size:12px; color:#cce0d5; white-space:nowrap; }
     main { max-width:1280px; margin:0 auto; padding:24px; }
+    .date-panel { display:flex; align-items:end; gap:12px; margin-bottom:18px; padding:14px 17px; background:var(--paper); border:1px solid var(--line); border-radius:12px; box-shadow:0 2px 8px #13251b0a; }
+    .date-panel p { margin:0 auto 2px 0; color:var(--muted); }
     .cards { display:grid; grid-template-columns:repeat(4,minmax(130px,1fr)); gap:12px; margin-bottom:18px; }
     .card { background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:15px 17px; box-shadow:0 2px 8px #13251b0a; }
     .card span { display:block; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
@@ -55,12 +57,16 @@ export function queueAdminPage(nonce) {
     .error { max-width:280px; overflow:hidden; text-overflow:ellipsis; color:var(--red); }
     .empty { padding:42px; text-align:center; color:var(--muted); }
     footer { padding:13px 2px; color:var(--muted); font-size:12px; }
-    @media (max-width:700px) { header div { align-items:flex-start; flex-direction:column; }.cards { grid-template-columns:repeat(2,1fr); } main { padding:14px; }.controls label { flex:1; min-width:130px; } button { margin-left:0; width:100%; }.session-card button { width:auto; } }
+    @media (max-width:700px) { header div { align-items:flex-start; flex-direction:column; }.date-panel { align-items:stretch; flex-direction:column; }.date-panel p { margin-right:0; }.cards { grid-template-columns:repeat(2,1fr); } main { padding:14px; }.controls label { flex:1; min-width:130px; } button { margin-left:0; width:100%; }.session-card button { width:auto; } }
   </style>
 </head>
 <body>
   <header><div><section><h1>Fila de envios</h1><p>Acompanhamento local do J-API</p></section><span id="connection">Carregando…</span></div></header>
   <main>
+    <section class="date-panel" aria-label="Período">
+      <p>Escolha o dia dos envios exibidos no resumo e na tabela.</p>
+      <label>Dia<input id="date-filter" type="date"></label>
+    </section>
     <section class="cards" aria-label="Resumo">
       <article class="card"><span>Pendentes</span><strong id="count-pending">0</strong></article>
       <article class="card"><span>Processando</span><strong id="count-processing">0</strong></article>
@@ -78,7 +84,7 @@ export function queueAdminPage(nonce) {
       <table><thead><tr><th>Status</th><th>Sessão</th><th>Destinatário</th><th>Tipo</th><th>Criado</th><th>Enviado</th><th>Tentativas</th><th>Último erro</th></tr></thead><tbody id="jobs"></tbody></table>
       <div class="empty" id="empty" hidden>Nenhum envio encontrado para os filtros selecionados.</div>
     </div>
-    <footer>Atualização automática a cada 10 segundos · até 500 jobs recentes por sessão</footer>
+    <footer>Atualização automática a cada 10 segundos · histórico do dia selecionado</footer>
   </main>
   <dialog id="qr-dialog" aria-labelledby="qr-title">
     <section class="qr-panel">
@@ -99,6 +105,8 @@ export function queueAdminPage(nonce) {
     const labels = { pending:'Pendente', processing:'Processando', sent:'Enviada', failed:'Falha', text:'Texto', pix:'PIX', pdf:'PDF' };
     const maskPhone = (phone) => phone.length < 8 ? '••••' : phone.slice(0,4) + '•••••' + phone.slice(-4);
     const date = (value) => value ? new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'medium'}).format(new Date(value)) : '—';
+    const localDateValue = (value=new Date()) => { const offset=value.getTimezoneOffset()*60000; return new Date(value.getTime()-offset).toISOString().slice(0,10); };
+    const selectedRange = () => { const [year,month,day]=byId('date-filter').value.split('-').map(Number); const start=new Date(year,month-1,day); const end=new Date(year,month-1,day+1); return {start:start.getTime(),end:end.getTime()}; };
 
     function cell(row, value, className) { const td=document.createElement('td'); td.textContent=value; if(className) td.className=className; row.append(td); return td; }
     function renderSessions() {
@@ -136,7 +144,8 @@ export function queueAdminPage(nonce) {
         const {sessions}=await sessionResponse.json(); state.sessions=sessions;
         const current=byId('session-filter').value; const select=byId('session-filter'); select.replaceChildren(new Option('Todas',''));
         for(const session of sessions) select.add(new Option(session.id,session.id)); select.value=current;
-        const responses=await Promise.all(sessions.map(async(session)=>{const response=await fetch('/sessions/'+encodeURIComponent(session.id)+'/queue?limit=500',{cache:'no-store'}); if(!response.ok) throw new Error('Falha ao consultar '+session.id); return (await response.json()).queue;}));
+        const range=selectedRange(); const query=new URLSearchParams({start:String(range.start),end:String(range.end)});
+        const responses=await Promise.all(sessions.map(async(session)=>{const response=await fetch('/sessions/'+encodeURIComponent(session.id)+'/queue?'+query,{cache:'no-store'}); if(!response.ok) throw new Error('Falha ao consultar '+session.id); return (await response.json()).queue;}));
         state.jobs=responses.flat().sort((a,b)=>b.createdAt-a.createdAt); render();
         byId('connection').textContent='Atualizado às '+new Intl.DateTimeFormat('pt-BR',{timeStyle:'medium'}).format(new Date());
       } catch(error) { byId('connection').textContent='Erro: '+error.message; }
@@ -167,6 +176,7 @@ export function queueAdminPage(nonce) {
       const session=input.value; byId('qr-title').textContent='Conectar · '+session; byId('qr-status').textContent='Preparando o QR Code da sessão '+session+'…'; loadQr(session);
     }
     function openQr() { stopQrPolling(); byId('qr-title').textContent='Conectar WhatsApp'; byId('qr-status').textContent='Use um nome novo para criar outra sessão ou informe uma sessão existente.'; byId('qr-session').value=byId('session-filter').value; byId('qr-dialog').showModal(); byId('qr-session').focus(); }
+    byId('date-filter').value=localDateValue(); byId('date-filter').addEventListener('change',load);
     byId('session-filter').addEventListener('change',render); byId('status-filter').addEventListener('change',render); byId('refresh').addEventListener('click',load);
     byId('qr-open').addEventListener('click',openQr); byId('qr-form').addEventListener('submit',(event)=>{event.preventDefault(); beginQr();}); byId('qr-close').addEventListener('click',()=>byId('qr-dialog').close()); byId('qr-dialog').addEventListener('close',stopQrPolling);
     load(); setInterval(load,10000);
