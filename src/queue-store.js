@@ -32,6 +32,12 @@ export class QueueStore {
       );
       CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(session, status, available_at, created_at);
       CREATE INDEX IF NOT EXISTS jobs_sent ON jobs(session, status, sent_at);
+      CREATE TABLE IF NOT EXISTS blocked_recipients (
+        phone TEXT PRIMARY KEY,
+        reason TEXT NOT NULL,
+        blocked_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS blocked_recipients_date ON blocked_recipients(blocked_at DESC);
     `);
     this.database.prepare("UPDATE jobs SET status = 'pending', available_at = ?, last_error = 'service restarted during processing' WHERE status = 'processing'").run(Date.now());
   }
@@ -102,6 +108,29 @@ export class QueueStore {
 
   fail(id, error) {
     this.database.prepare("UPDATE jobs SET status = 'failed', last_error = ? WHERE id = ?").run(String(error).slice(0, 500), id);
+  }
+
+  blockRecipient(phone, reason, now = Date.now()) {
+    this.database.prepare(`INSERT INTO blocked_recipients (phone, reason, blocked_at)
+      VALUES (?, ?, ?) ON CONFLICT(phone) DO NOTHING`).run(phone, String(reason).slice(0, 500), now);
+    return this.database.prepare('SELECT phone, reason, blocked_at AS blockedAt FROM blocked_recipients WHERE phone = ?').get(phone);
+  }
+
+  blockedRecipient(phones) {
+    const candidates = [...new Set(phones)];
+    if (candidates.length === 0) return null;
+    const placeholders = candidates.map(() => '?').join(', ');
+    return this.database.prepare(`SELECT phone, reason, blocked_at AS blockedAt FROM blocked_recipients
+      WHERE phone IN (${placeholders}) ORDER BY blocked_at LIMIT 1`).get(...candidates) ?? null;
+  }
+
+  listBlockedRecipients() {
+    return this.database.prepare(`SELECT phone, reason, blocked_at AS blockedAt FROM blocked_recipients
+      ORDER BY blocked_at DESC, phone`).all();
+  }
+
+  unblockRecipient(phone) {
+    return this.database.prepare('DELETE FROM blocked_recipients WHERE phone = ?').run(phone).changes > 0;
   }
 
   sentStats(session, hourStart, dayStart) {

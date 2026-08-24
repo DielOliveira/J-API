@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { phoneCandidates } from './phone.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -25,6 +26,8 @@ export class PersistentSendQueue {
     if (this.#closed) throw new Error('send queue is shutting down');
     const existing = idempotencyKey ? this.store.getByIdempotencyKey(this.session, idempotencyKey) : null;
     if (existing) return { job: existing, duplicate: true };
+    const blockedRecipient = this.blockedRecipient(phone);
+    if (blockedRecipient) return { blocked: true, blockedRecipient, duplicate: false };
     if (this.size >= this.limits.maxQueueSize) throw new Error('send queue is full');
     const result = this.store.enqueue({
       id: randomUUID(), session: this.session, type, phone, payload,
@@ -45,6 +48,10 @@ export class PersistentSendQueue {
 
   listBetween(start, end) {
     return this.store.listBetween(this.session, start, end);
+  }
+
+  blockedRecipient(phone) {
+    return this.store.blockedRecipient(phoneCandidates(phone));
   }
 
   start() {
@@ -102,6 +109,13 @@ export class PersistentSendQueue {
           this.#wake(this.limits.pollMs);
           return;
         }
+        const blockedRecipient = this.blockedRecipient(next.phone);
+        if (blockedRecipient) {
+          const job = this.store.claimNext(this.session, now);
+          this.store.fail(job.id, `Recipient blocked: ${blockedRecipient.reason}`);
+          this.logger.info(`[message] session=${this.session} suppressed job=${job.id} blocked_recipient=true`);
+          continue;
+        }
         const limitedFor = this.#limitDelay(now, next.phone);
         if (limitedFor > 0) {
           this.#wake(Math.min(limitedFor, 60_000));
@@ -113,8 +127,10 @@ export class PersistentSendQueue {
           this.store.markSent(job.id, messageId);
           this.logger.info(`[message] session=${this.session} sent job=${job.id} id=${messageId}`);
         } catch (error) {
-          const permanent = /not registered|outside ALLOWED|does not exist|not a PDF|invalid/i.test(error.message);
+          const unregistered = error.message === 'Phone is not registered on WhatsApp';
+          const permanent = unregistered || /outside ALLOWED|does not exist|not a PDF|invalid/i.test(error.message);
           const disconnected = error.message === 'WhatsApp is not connected';
+          if (unregistered) this.store.blockRecipient(job.phone, error.message);
           if (permanent || (!disconnected && job.attempts >= this.limits.maxAttempts)) {
             this.store.fail(job.id, error.message);
             this.logger.error(`[message] session=${this.session} failed job=${job.id}: ${error.message}`);

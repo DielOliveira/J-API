@@ -124,6 +124,15 @@ O painel atualiza a cada 10 segundos, exibe todas as sessões com seu estado de 
 
 Sessões conectadas exibem a ação **Desconectar** no próprio cartão. Após a confirmação, somente aquele dispositivo é desvinculado; os envios da sessão ficam indisponíveis até que ela seja vinculada novamente por QR Code.
 
+O painel também lista, com telefone mascarado, os destinatários que o WhatsApp confirmou como não registrados. Novos envios para esses números são descartados antes de entrar na fila e respondem HTTP 200 com `success: true`, sem exigir alteração do consumidor. Use **Desbloquear** para permitir uma nova verificação caso o número passe a usar WhatsApp. Falhas temporárias, desconexões, limites e esgotamento de retentativas não bloqueiam destinatários.
+
+A lista operacional também está disponível pela API local:
+
+```text
+GET    /blocked-recipients
+DELETE /blocked-recipients/{telefone}
+```
+
 O painel segue a mesma fronteira de confiança da API e permanece disponível exclusivamente em `127.0.0.1`. Não altere o bind para expô-lo diretamente na internet.
 
 ## Enviar texto

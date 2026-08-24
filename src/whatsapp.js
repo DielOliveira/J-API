@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import QRCode from 'qrcode';
+import { phoneCandidates } from './phone.js';
 import pino from 'pino';
 import makeWASocket, {
   Browsers,
@@ -13,17 +14,6 @@ import makeWASocket, {
 
 const silentBaileysLogger = pino({ level: 'silent' });
 
-export function phoneCandidates(phone) {
-  const candidates = [phone];
-
-  if (phone.startsWith('55') && phone.length === 13 && phone[4] === '9') {
-    candidates.push(`${phone.slice(0, 4)}${phone.slice(5)}`);
-  } else if (phone.startsWith('55') && phone.length === 12) {
-    candidates.push(`${phone.slice(0, 4)}9${phone.slice(4)}`);
-  }
-
-  return candidates;
-}
 let waVersionPromise;
 
 function pixRelayNodes() {

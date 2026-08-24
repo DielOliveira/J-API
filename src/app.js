@@ -60,6 +60,17 @@ function idempotencyKey(request) {
 }
 
 function accepted(response, id, result) {
+  if (result.blocked) {
+    response.status(200).json({
+      success: true,
+      session: id,
+      queued: false,
+      duplicate: false,
+      blocked: true,
+      status: 'blocked'
+    });
+    return;
+  }
   response.status(result.duplicate ? 200 : 202).json({
     success: true,
     session: id,
@@ -69,6 +80,14 @@ function accepted(response, id, result) {
     status: result.job.status,
     ...(result.job.whatsappMessageId ? { messageId: result.job.whatsappMessageId } : {})
   });
+}
+
+function logAccepted(logger, id, type, result, queue) {
+  if (result.blocked) {
+    logger.info(`[message] session=${id} suppressed type=${type} blocked_recipient=true`);
+    return;
+  }
+  logger.info(`[message] session=${id} accepted type=${type} job=${result.job.id} queue=${queue.size}`);
 }
 
 async function existingSession(sessions, id) {
@@ -93,12 +112,25 @@ function queueList(request, queue) {
   return queue.list(Number(rawLimit));
 }
 
-export function createApp({ sessions, config, logger = console }) {
+export function createApp({ sessions, store = sessions.store, config, logger = console }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: config.bodyLimit, strict: true }));
 
   app.get('/sessions', (_request, response) => response.json({ sessions: sessions.list() }));
+
+  app.get('/blocked-recipients', (_request, response) => {
+    response.json({ blockedRecipients: store.listBlockedRecipients() });
+  });
+
+  app.delete('/blocked-recipients/:phone', (request, response, next) => {
+    try {
+      const phone = validatePhone(request.params.phone);
+      const removed = store.unblockRecipient(phone);
+      if (!removed) return response.status(404).json({ success: false, error: 'blocked recipient not found' });
+      response.json({ success: true, phone });
+    } catch (error) { next(error); }
+  });
 
   app.get('/admin/queue', (_request, response) => {
     const nonce = randomBytes(16).toString('base64');
@@ -144,7 +176,7 @@ export function createApp({ sessions, config, logger = console }) {
       const phone = validatePhone(request.body?.phone);
       const message = validateMessage(request.body?.message);
       const result = queue.add({ type: 'text', phone, payload: { message }, idempotencyKey: idempotencyKey(request) });
-      logger.info(`[message] session=${id} accepted type=text job=${result.job.id} queue=${queue.size}`);
+      logAccepted(logger, id, 'text', result, queue);
       accepted(response, id, result);
     } catch (error) { next(error); }
   };
@@ -154,6 +186,11 @@ export function createApp({ sessions, config, logger = console }) {
       const id = sessionId(request);
       const { whatsapp, queue } = await existingSession(sessions, id);
       const phone = validatePhone(request.body?.phone);
+      const blocked = queue.blockedRecipient(phone);
+      if (blocked) {
+        logger.info(`[message] session=${id} suppressed type=pdf blocked_recipient=true`);
+        return accepted(response, id, { blocked: true });
+      }
       const filename = sanitizeFilename(request.body?.filename);
       const caption = validateMessage(request.body?.caption, 'caption', { optional: true });
       const hasPath = typeof request.body?.path === 'string' && request.body.path !== '';
@@ -171,8 +208,8 @@ export function createApp({ sessions, config, logger = console }) {
         const result = queue.add({
           type: 'pdf', phone, payload: { pdfPath, filename, caption }, idempotencyKey: idempotencyKey(request)
         });
-        if (result.duplicate) await fs.unlink(pdfPath).catch(() => {});
-        logger.info(`[message] session=${id} accepted type=pdf job=${result.job.id} queue=${queue.size}`);
+        if (result.duplicate || result.blocked) await fs.unlink(pdfPath).catch(() => {});
+        logAccepted(logger, id, 'pdf', result, queue);
         accepted(response, id, result);
       } catch (error) {
         await fs.unlink(pdfPath).catch(() => {});
@@ -193,7 +230,7 @@ export function createApp({ sessions, config, logger = console }) {
       const result = queue.add({
         type: 'pix', phone, payload: { message, pix, merchantName, keyType }, idempotencyKey: idempotencyKey(request)
       });
-      logger.info(`[message] session=${id} accepted type=pix job=${result.job.id} queue=${queue.size}`);
+      logAccepted(logger, id, 'pix', result, queue);
       accepted(response, id, result);
     } catch (error) { next(error); }
   };

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { phoneCandidates } from '../src/whatsapp.js';
+import { phoneCandidates } from '../src/phone.js';
 
 test('Brazilian mobile numbers try current and legacy WhatsApp formats', () => {
   assert.deepEqual(phoneCandidates('5562984468028'), ['5562984468028', '556284468028']);

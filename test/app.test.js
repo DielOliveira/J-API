@@ -3,12 +3,16 @@ import test from 'node:test';
 import { createApp } from '../src/app.js';
 const quietLogger = { info() {}, error() {} };
 
-async function withServer(whatsapp, run) {
+async function withServer(whatsapp, run, { initialBlocked = [] } = {}) {
   let sequence = 0;
   const jobs = new Map();
+  const blockedRecipients = new Map(initialBlocked.map((recipient) => [recipient.phone, recipient]));
   const queue = {
     size: 0,
-    add: ({ type }) => {
+    blockedRecipient: (phone) => blockedRecipients.get(phone) ?? null,
+    add: ({ type, phone }) => {
+      const blockedRecipient = blockedRecipients.get(phone);
+      if (blockedRecipient) return { blocked: true, blockedRecipient, duplicate: false };
       const job = { id: `job-${++sequence}`, status: 'pending', type };
       jobs.set(job.id, job);
       return { job, duplicate: false };
@@ -21,8 +25,13 @@ async function withServer(whatsapp, run) {
     list: () => [{ id: 'default', ...whatsapp.status(), queue: 0 }],
     get: async (id) => id === 'default' ? { whatsapp, queue } : null
   };
+  const store = {
+    listBlockedRecipients: () => [...blockedRecipients.values()],
+    unblockRecipient: (phone) => blockedRecipients.delete(phone)
+  };
   const app = createApp({
     sessions,
+    store,
     config: {
       bodyLimit: '2kb', allowedFilePaths: ['/tmp/allowed'], allowedDownloadHosts: ['example.com'],
       maxPdfBytes: 1024, queueFilesPath: '/tmp/j-api-test-queue-files'
@@ -67,12 +76,41 @@ test('queue admin panel is served with restrictive browser security headers', as
     assert.match(html, /localDateValue/);
     assert.match(html, /renderSessions/);
     assert.match(html, /Desconectar/);
+    assert.match(html, /Destinatários bloqueados/);
+    assert.match(html, /Desbloquear/);
+    assert.match(html, /\/blocked-recipients/);
     assert.match(html, /\/logout/);
     assert.match(html, /pattern="\[a-z0-9\]\[a-z0-9_-\]\{0,31\}"/);
     assert.match(html, /\/sessions\/.*\/qr/);
     assert.match(html, /#qr-image\[hidden\] \{ display:none; \}/);
     assert.doesNotMatch(html, /payload|merchantName|pdfPath/);
   });
+});
+
+test('blocked recipients are suppressed transparently and can be unblocked', async () => {
+  const recipient = { phone: '5562999999999', reason: 'Phone is not registered on WhatsApp', blockedAt: 1234 };
+  await withServer({ status: () => ({}), qr: () => ({}) }, async (base) => {
+    const suppressed = await fetch(`${base}/send-text`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: recipient.phone, message: 'Olá' })
+    });
+    assert.equal(suppressed.status, 200);
+    assert.deepEqual(await suppressed.json(), {
+      success: true, session: 'default', queued: false, duplicate: false, blocked: true, status: 'blocked'
+    });
+
+    assert.deepEqual(await (await fetch(`${base}/blocked-recipients`)).json(), { blockedRecipients: [recipient] });
+    assert.equal((await fetch(`${base}/blocked-recipients/${recipient.phone}`, { method: 'DELETE' })).status, 200);
+    assert.deepEqual(await (await fetch(`${base}/blocked-recipients`)).json(), { blockedRecipients: [] });
+
+    const accepted = await fetch(`${base}/send-text`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: recipient.phone, message: 'Olá novamente' })
+    });
+    assert.equal(accepted.status, 202);
+  }, { initialBlocked: [recipient] });
 });
 
 test('queue endpoint accepts a bounded date range', async () => {

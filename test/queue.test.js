@@ -101,6 +101,51 @@ test('temporary failures are retried without a new enqueue', async (t) => {
   store.close();
 });
 
+test('confirmed unregistered recipients are blocked and future jobs are suppressed', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'j-api-queue-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = new QueueStore(path.join(root, 'queue.sqlite'));
+  let attempts = 0;
+  const queue = new PersistentSendQueue({
+    store, session: 'default', limits, logger,
+    send: async () => { attempts += 1; throw new Error('Phone is not registered on WhatsApp'); }
+  });
+  const first = queue.add({ type: 'text', phone: '5562999999999', payload: { message: 'one' } });
+  queue.start();
+  await eventually(() => queue.get(first.job.id)?.status === 'failed');
+  assert.equal(attempts, 1);
+  assert.deepEqual(store.listBlockedRecipients().map(({ phone, reason }) => ({ phone, reason })), [{
+    phone: '5562999999999', reason: 'Phone is not registered on WhatsApp'
+  }]);
+
+  const suppressed = queue.add({ type: 'text', phone: '556299999999', payload: { message: 'two' } });
+  assert.equal(suppressed.blocked, true);
+  assert.equal(suppressed.blockedRecipient.phone, '5562999999999');
+  assert.equal(attempts, 1);
+
+  assert.equal(store.unblockRecipient('5562999999999'), true);
+  const accepted = queue.add({ type: 'text', phone: '5562999999999', payload: { message: 'three' } });
+  assert.ok(accepted.job.id);
+  await queue.close();
+  store.close();
+});
+
+test('temporary and exhausted retry failures do not block recipients', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'j-api-queue-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = new QueueStore(path.join(root, 'queue.sqlite'));
+  const queue = new PersistentSendQueue({
+    store, session: 'default', limits, logger,
+    send: async () => { throw new Error('temporary connection problem'); }
+  });
+  const result = queue.add({ type: 'text', phone: '5511111111111', payload: { message: 'one' } });
+  queue.start();
+  await eventually(() => queue.get(result.job.id)?.status === 'failed');
+  assert.deepEqual(store.listBlockedRecipients(), []);
+  await queue.close();
+  store.close();
+});
+
 test('processing jobs return to pending after reopening the store', async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'j-api-queue-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));

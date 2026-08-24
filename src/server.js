@@ -14,7 +14,7 @@ const sessions = new SessionManager({
   store: queueStore,
   queueLimits: config.queueLimits
 });
-const server = http.createServer(createApp({ sessions, config }));
+const server = http.createServer(createApp({ sessions, store: queueStore, config }));
 let shuttingDown = false;
 
 async function shutdown(signal) {

@@ -56,6 +56,13 @@ export function queueAdminPage(nonce) {
     .pending { color:var(--amber); background:var(--amber-soft); }.processing { color:var(--blue); background:var(--blue-soft); }.sent { color:var(--green); background:var(--green-soft); }.failed { color:var(--red); background:var(--red-soft); }
     .error { max-width:280px; overflow:hidden; text-overflow:ellipsis; color:var(--red); }
     .empty { padding:42px; text-align:center; color:var(--muted); }
+    .blocked-panel { margin-top:20px; background:var(--paper); border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow:0 2px 8px #13251b0a; }
+    .blocked-heading { display:flex; align-items:center; gap:12px; padding:15px 17px; border-bottom:1px solid var(--line); }
+    .blocked-heading div { flex:1; }
+    .blocked-heading h2 { margin:0; font-size:17px; }
+    .blocked-heading p { margin:2px 0 0; color:var(--muted); font-size:12px; }
+    .blocked-count { color:var(--red); background:var(--red-soft); border-radius:999px; padding:4px 9px; }
+    .unblock { min-height:30px; margin:0; padding:4px 9px; border-color:#d9a7a3; background:#fff; color:var(--red); font-size:12px; }
     footer { padding:13px 2px; color:var(--muted); font-size:12px; }
     @media (max-width:700px) { header div { align-items:flex-start; flex-direction:column; }.date-panel { align-items:stretch; flex-direction:column; }.date-panel p { margin-right:0; }.cards { grid-template-columns:repeat(2,1fr); } main { padding:14px; }.controls label { flex:1; min-width:130px; } button { margin-left:0; width:100%; }.session-card button { width:auto; } }
   </style>
@@ -84,6 +91,13 @@ export function queueAdminPage(nonce) {
       <table><thead><tr><th>Status</th><th>Sessão</th><th>Destinatário</th><th>Tipo</th><th>Criado</th><th>Enviado</th><th>Tentativas</th><th>Último erro</th></tr></thead><tbody id="jobs"></tbody></table>
       <div class="empty" id="empty" hidden>Nenhum envio encontrado para os filtros selecionados.</div>
     </div>
+    <section class="blocked-panel" aria-labelledby="blocked-title">
+      <div class="blocked-heading"><div><h2 id="blocked-title">Destinatários bloqueados</h2><p>Números confirmados como não registrados no WhatsApp.</p></div><strong class="blocked-count" id="blocked-count">0</strong></div>
+      <div class="table-wrap">
+        <table><thead><tr><th>Destinatário</th><th>Motivo</th><th>Bloqueado em</th><th>Ação</th></tr></thead><tbody id="blocked-recipients"></tbody></table>
+        <div class="empty" id="blocked-empty">Nenhum destinatário bloqueado.</div>
+      </div>
+    </section>
     <footer>Atualização automática a cada 10 segundos · histórico do dia selecionado</footer>
   </main>
   <dialog id="qr-dialog" aria-labelledby="qr-title">
@@ -100,7 +114,7 @@ export function queueAdminPage(nonce) {
     </section>
   </dialog>
   <script nonce="${nonce}">
-    const state = { jobs: [], sessions: [], loading: false, qrTimer: null };
+    const state = { jobs: [], sessions: [], blockedRecipients: [], loading: false, qrTimer: null };
     const byId = (id) => document.getElementById(id);
     const labels = { pending:'Pendente', processing:'Processando', sent:'Enviada', failed:'Falha', text:'Texto', pix:'PIX', pdf:'PDF' };
     const maskPhone = (phone) => phone.length < 8 ? '••••' : phone.slice(0,4) + '•••••' + phone.slice(-4);
@@ -121,8 +135,21 @@ export function queueAdminPage(nonce) {
         container.append(card);
       }
     }
+    function renderBlockedRecipients() {
+      const body=byId('blocked-recipients'); body.replaceChildren();
+      for(const recipient of state.blockedRecipients) {
+        const row=document.createElement('tr');
+        cell(row,maskPhone(recipient.phone));
+        cell(row,recipient.reason); cell(row,date(recipient.blockedAt));
+        const action=cell(row,''); const button=document.createElement('button'); button.type='button'; button.className='unblock'; button.textContent='Desbloquear'; button.addEventListener('click',()=>unblockRecipient(recipient.phone)); action.append(button);
+        body.append(row);
+      }
+      byId('blocked-count').textContent=String(state.blockedRecipients.length);
+      byId('blocked-empty').hidden=state.blockedRecipients.length!==0; body.hidden=state.blockedRecipients.length===0;
+    }
     function render() {
       renderSessions();
+      renderBlockedRecipients();
       for (const status of ['pending','processing','sent','failed']) byId('count-'+status).textContent=state.jobs.filter((job)=>job.status===status).length;
       const session=byId('session-filter').value, status=byId('status-filter').value;
       const jobs=state.jobs.filter((job)=>(!session||job.session===session)&&(!status||job.status===status));
@@ -140,8 +167,9 @@ export function queueAdminPage(nonce) {
     async function load() {
       if(state.loading) return; state.loading=true; const button=byId('refresh'); button.disabled=true;
       try {
-        const sessionResponse=await fetch('/sessions',{cache:'no-store'}); if(!sessionResponse.ok) throw new Error('Não foi possível carregar as sessões');
-        const {sessions}=await sessionResponse.json(); state.sessions=sessions;
+        const [sessionResponse,blockedResponse]=await Promise.all([fetch('/sessions',{cache:'no-store'}),fetch('/blocked-recipients',{cache:'no-store'})]);
+        if(!sessionResponse.ok) throw new Error('Não foi possível carregar as sessões'); if(!blockedResponse.ok) throw new Error('Não foi possível carregar os destinatários bloqueados');
+        const {sessions}=await sessionResponse.json(); const {blockedRecipients}=await blockedResponse.json(); state.sessions=sessions; state.blockedRecipients=blockedRecipients;
         const current=byId('session-filter').value; const select=byId('session-filter'); select.replaceChildren(new Option('Todas',''));
         for(const session of sessions) select.add(new Option(session.id,session.id)); select.value=current;
         const range=selectedRange(); const query=new URLSearchParams({start:String(range.start),end:String(range.end)});
@@ -150,6 +178,14 @@ export function queueAdminPage(nonce) {
         byId('connection').textContent='Atualizado às '+new Intl.DateTimeFormat('pt-BR',{timeStyle:'medium'}).format(new Date());
       } catch(error) { byId('connection').textContent='Erro: '+error.message; }
       finally { state.loading=false; button.disabled=false; }
+    }
+    async function unblockRecipient(phone) {
+      if(!confirm('Desbloquear '+maskPhone(phone)+'? Novos envios poderão ser feitos para esse número.')) return;
+      try {
+        const response=await fetch('/blocked-recipients/'+encodeURIComponent(phone),{method:'DELETE'}); const result=await response.json();
+        if(!response.ok) throw new Error(result.error||'Falha ao desbloquear o destinatário');
+        state.blockedRecipients=state.blockedRecipients.filter((recipient)=>recipient.phone!==phone); render();
+      } catch(error) { alert('Erro: '+error.message); }
     }
     async function disconnectSession(session) {
       if(!confirm('Desconectar a sessão '+session+'? Os envios dela ficarão indisponíveis até um novo vínculo por QR Code.')) return;
