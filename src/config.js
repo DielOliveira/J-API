@@ -41,7 +41,8 @@ export function loadConfig() {
   if (sessionPath === path.parse(sessionPath).root) throw new Error('SESSION_PATH cannot be a filesystem root');
   const queueDatabasePath = path.resolve(process.env.QUEUE_DATABASE_PATH ?? './data/queue.sqlite');
   const queueFilesPath = path.resolve(process.env.QUEUE_FILES_PATH ?? './data/queue-files');
-  if (queueDatabasePath === path.parse(queueDatabasePath).root || queueFilesPath === path.parse(queueFilesPath).root) {
+  const messageMediaPath = path.resolve(process.env.MESSAGE_MEDIA_PATH ?? './data/message-media');
+  if (queueDatabasePath === path.parse(queueDatabasePath).root || queueFilesPath === path.parse(queueFilesPath).root || messageMediaPath === path.parse(messageMediaPath).root) {
     throw new Error('queue paths cannot be filesystem roots');
   }
 
@@ -58,6 +59,8 @@ export function loadConfig() {
     sessionPath,
     queueDatabasePath,
     queueFilesPath,
+    messageMediaPath,
+    maxMessageMediaBytes: positiveInteger('MAX_MESSAGE_MEDIA_SIZE_MB', 20) * 1024 * 1024,
     maxSessions: positiveInteger('MAX_SESSIONS', 10, { max: 100 }),
     allowedFilePaths,
     allowedDownloadHosts,

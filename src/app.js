@@ -143,7 +143,7 @@ export function createApp({ sessions, store = sessions.store, config, logger = c
   app.get('/admin/queue', (_request, response) => {
     const nonce = randomBytes(16).toString('base64');
     response.set({
-      'Content-Security-Policy': `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; connect-src 'self'; img-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`,
+      'Content-Security-Policy': `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`,
       'Cache-Control': 'no-store',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer'
@@ -288,7 +288,25 @@ export function createApp({ sessions, store = sessions.store, config, logger = c
       await existingSession(sessions, id);
       const monitor = store.getMessageMonitor(id);
       if (!monitor) return response.json({ session: id, phone: null, messages: [] });
-      response.json({ session: id, phone: monitor.phone, messages: monitoredMessageList(request, store, id, monitor.phone) });
+      const messages = monitoredMessageList(request, store, id, monitor.phone).map((message) => ({
+        ...message,
+        ...(message.hasMedia ? { mediaUrl: `/sessions/${encodeURIComponent(id)}/messages/${encodeURIComponent(message.messageId)}/media` } : {})
+      }));
+      response.json({ session: id, phone: monitor.phone, messages });
+    } catch (error) { next(error); }
+  });
+
+  app.get('/sessions/:session/messages/:messageId/media', async (request, response, next) => {
+    try {
+      const id = sessionId(request);
+      await existingSession(sessions, id);
+      const media = store.monitoredMessageMedia(id, request.params.messageId);
+      if (!media) return response.status(404).json({ success: false, error: 'message media not found' });
+      const root = await fs.realpath(config.messageMediaPath);
+      const realPath = await fs.realpath(media.path);
+      if (realPath !== root && !realPath.startsWith(`${root}/`)) throw new Error('message media is outside configured storage');
+      response.set({ 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
+      response.type(media.mime).send(await fs.readFile(realPath));
     } catch (error) { next(error); }
   });
 

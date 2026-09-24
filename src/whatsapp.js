@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { fileTypeFromBuffer } from 'file-type';
 import QRCode from 'qrcode';
 import { phoneCandidates } from './phone.js';
 import pino from 'pino';
@@ -7,6 +9,7 @@ import { monitoredMessage } from './message-monitor.js';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   generateWAMessageFromContent,
   proto,
   fetchLatestWaWebVersion,
@@ -50,10 +53,12 @@ export class WhatsAppClient {
   #qrGeneration = 0;
   #status = { connected: false, state: 'starting', phone: null, qrDataUrl: null };
 
-  constructor({ sessionPath, session, store, logger = console, logPrefix = '' }) {
+  constructor({ sessionPath, session, store, messageMediaPath, maxMessageMediaBytes, logger = console, logPrefix = '' }) {
     this.sessionPath = sessionPath;
     this.session = session;
     this.store = store;
+    this.messageMediaPath = messageMediaPath;
+    this.maxMessageMediaBytes = maxMessageMediaBytes;
     this.logger = logger;
     this.logPrefix = logPrefix ? ` ${logPrefix}` : '';
   }
@@ -106,11 +111,32 @@ export class WhatsAppClient {
         const record = await monitoredMessage(socket, message, monitor, this.session);
         if (record && this.store.saveMonitoredMessage(record)) {
           this.logger.info(`[monitor]${this.logPrefix} stored direction=${record.direction} id=${record.messageId}`);
+          if (record.messageType === 'imageMessage') await this.#storeImage(socket, message, record);
         }
       } catch (error) {
         this.logger.error(`[monitor]${this.logPrefix} could not store message: ${error.message}`);
       }
     }
+  }
+
+  async #storeImage(socket, message, record) {
+    const buffer = await downloadMediaMessage(message, 'buffer', {}, {
+      logger: silentBaileysLogger,
+      reuploadRequest: (mediaMessage) => socket.updateMediaMessage(mediaMessage)
+    });
+    if (buffer.length > this.maxMessageMediaBytes) throw new Error('monitored image exceeds configured size limit');
+    const detected = await fileTypeFromBuffer(buffer);
+    if (!detected || !['image/jpeg', 'image/png', 'image/webp'].includes(detected.mime)) {
+      throw new Error('monitored image has an unsupported file type');
+    }
+    const mime = detected.mime;
+    const extension = `.${detected.ext}`;
+    const directory = path.join(this.messageMediaPath, this.session);
+    const filename = `${createHash('sha256').update(record.messageId).digest('hex')}${extension}`;
+    await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+    const mediaPath = path.join(directory, filename);
+    await fs.writeFile(mediaPath, buffer, { mode: 0o600 });
+    this.store.attachMonitoredMedia(this.session, record.messageId, { path: mediaPath, mime, size: buffer.length });
   }
 
   async #onConnectionUpdate(socket, { connection, lastDisconnect, qr }) {

@@ -74,6 +74,7 @@ export function queueAdminPage(nonce) {
     #monitor-stop { color:var(--red); background:#fff; border-color:#d9a7a3; }
     #monitor-status { margin-left:auto; color:var(--muted); font-size:12px; }
     .message-text { max-width:520px; overflow:hidden; text-overflow:ellipsis; }
+    .message-image { display:block; width:54px; height:54px; border-radius:7px; object-fit:cover; border:1px solid var(--line); }
     .received { color:var(--blue); background:var(--blue-soft); }.sent-message { color:var(--green); background:var(--green-soft); }
     footer { padding:13px 2px; color:var(--muted); font-size:12px; }
     @media (max-width:700px) { header div { align-items:flex-start; flex-direction:column; }.date-panel { align-items:stretch; flex-direction:column; }.date-panel p { margin-right:0; }.cards { grid-template-columns:repeat(2,1fr); } main { padding:14px; }.controls label { flex:1; min-width:130px; } button { margin-left:0; width:100%; }.session-card button { width:auto; } }
@@ -120,7 +121,7 @@ export function queueAdminPage(nonce) {
         <span id="monitor-status">Selecione uma sessão.</span>
       </form>
       <div class="table-wrap">
-        <table><thead><tr><th>Direção</th><th>Data</th><th>Tipo</th><th>Mensagem</th><th>ID</th></tr></thead><tbody id="messages"></tbody></table>
+        <table><thead><tr><th>Direção</th><th>Data</th><th>Tipo</th><th>Foto</th><th>Mensagem</th><th>ID</th></tr></thead><tbody id="messages"></tbody></table>
         <div class="empty" id="messages-empty">Nenhuma mensagem armazenada para esta sessão.</div>
       </div>
     </section>
@@ -195,6 +196,7 @@ export function queueAdminPage(nonce) {
         const row=document.createElement('tr');
         const directionCell=cell(row,''); const badge=document.createElement('span'); badge.className='badge '+(message.direction==='sent'?'sent-message':'received'); badge.textContent=message.direction==='sent'?'Enviada':'Recebida'; directionCell.append(badge);
         cell(row,date(message.messageAt)); cell(row,message.messageType);
+        const mediaCell=cell(row,''); if(message.mediaUrl) { const link=document.createElement('a'); link.href=message.mediaUrl; link.target='_blank'; link.rel='noopener'; const image=document.createElement('img'); image.className='message-image'; image.src=message.mediaUrl; image.alt='Foto armazenada'; image.loading='lazy'; link.append(image); mediaCell.append(link); } else mediaCell.textContent='—';
         const text=cell(row,message.text||'—','message-text'); if(message.text) text.title=message.text;
         cell(row,message.messageId); body.append(row);
       }

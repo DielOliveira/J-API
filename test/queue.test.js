@@ -181,8 +181,11 @@ test('message monitors and captured messages are persistent and deduplicated', a
   assert.equal(store.getMessageMonitor('default').phone, '5562999999999');
   assert.deepEqual(store.listMonitoredMessages('default', '5562999999999'), [{
     messageId: 'wa-1', session: 'default', phone: '5562999999999', direction: 'received',
-    messageType: 'conversation', text: 'Olá', content: { text: 'Olá' }, messageAt: 200, storedAt: 201
+    messageType: 'conversation', text: 'Olá', content: { text: 'Olá' }, hasMedia: false, messageAt: 200, storedAt: 201
   }]);
+  assert.equal(store.attachMonitoredMedia('default', 'wa-1', { path: '/private/photo.jpg', mime: 'image/jpeg', size: 321 }), true);
+  assert.deepEqual(store.monitoredMessageMedia('default', 'wa-1'), { path: '/private/photo.jpg', mime: 'image/jpeg', size: 321 });
+  assert.equal(store.listMonitoredMessages('default', '5562999999999')[0].hasMedia, true);
   assert.equal(store.removeMessageMonitor('default'), true);
   assert.equal(store.getMessageMonitor('default'), null);
   store.close();

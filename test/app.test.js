@@ -39,14 +39,15 @@ async function withServer(whatsapp, run, { initialBlocked = [] } = {}) {
     removeMessageMonitor: (session) => monitors.delete(session),
     listMonitoredMessages: (session, phone, limit, before) => monitoredMessages
       .filter((message) => message.session === session && message.phone === phone && message.messageAt < before)
-      .slice(0, limit)
+      .slice(0, limit),
+    monitoredMessageMedia: () => null
   };
   const app = createApp({
     sessions,
     store,
     config: {
       bodyLimit: '2kb', allowedFilePaths: ['/tmp/allowed'], allowedDownloadHosts: ['example.com'],
-      maxPdfBytes: 1024, queueFilesPath: '/tmp/j-api-test-queue-files'
+      maxPdfBytes: 1024, queueFilesPath: '/tmp/j-api-test-queue-files', messageMediaPath: '/tmp/j-api-test-message-media'
     },
     logger: quietLogger
   });
@@ -78,7 +79,7 @@ test('queue admin panel is served with restrictive browser security headers', as
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-security-policy'), /default-src 'none'/);
     assert.equal(response.headers.get('cache-control'), 'no-store');
-    assert.match(response.headers.get('content-security-policy'), /img-src data:/);
+    assert.match(response.headers.get('content-security-policy'), /img-src 'self' data:/);
     assert.match(html, /Fila de envios/);
     assert.match(html, /Conectar WhatsApp/);
     assert.match(html, /Nome da sessão/);

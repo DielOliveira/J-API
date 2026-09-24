@@ -12,7 +12,9 @@ const sessions = new SessionManager({
   rootPath: config.sessionPath,
   maxSessions: config.maxSessions,
   store: queueStore,
-  queueLimits: config.queueLimits
+  queueLimits: config.queueLimits,
+  messageMediaPath: config.messageMediaPath,
+  maxMessageMediaBytes: config.maxMessageMediaBytes
 });
 const server = http.createServer(createApp({ sessions, store: queueStore, config }));
 let shuttingDown = false;

@@ -59,6 +59,10 @@ export class QueueStore {
       CREATE INDEX IF NOT EXISTS monitored_messages_list
         ON monitored_messages(session, phone, message_at DESC, message_id DESC);
     `);
+    const messageColumns = new Set(this.database.prepare('PRAGMA table_info(monitored_messages)').all().map((column) => column.name));
+    if (!messageColumns.has('media_path')) this.database.exec('ALTER TABLE monitored_messages ADD COLUMN media_path TEXT');
+    if (!messageColumns.has('media_mime')) this.database.exec('ALTER TABLE monitored_messages ADD COLUMN media_mime TEXT');
+    if (!messageColumns.has('media_size')) this.database.exec('ALTER TABLE monitored_messages ADD COLUMN media_size INTEGER');
     this.database.prepare("UPDATE jobs SET status = 'pending', available_at = ?, last_error = 'service restarted during processing' WHERE status = 'processing'").run(Date.now());
   }
 
@@ -179,13 +183,24 @@ export class QueueStore {
     ).changes > 0;
   }
 
+  attachMonitoredMedia(session, messageId, media) {
+    return this.database.prepare(`UPDATE monitored_messages SET media_path = ?, media_mime = ?, media_size = ?
+      WHERE session = ? AND message_id = ?`).run(media.path, media.mime, media.size, session, messageId).changes > 0;
+  }
+
+  monitoredMessageMedia(session, messageId) {
+    return this.database.prepare(`SELECT media_path AS path, media_mime AS mime, media_size AS size
+      FROM monitored_messages WHERE session = ? AND message_id = ? AND media_path IS NOT NULL`).get(session, messageId) ?? null;
+  }
+
   listMonitoredMessages(session, phone, limit = 100, before = Number.MAX_SAFE_INTEGER) {
     return this.database.prepare(`SELECT message_id AS messageId, session, phone, direction,
-      message_type AS messageType, text, content, message_at AS messageAt, stored_at AS storedAt
+      message_type AS messageType, text, content, media_path IS NOT NULL AS hasMedia,
+      message_at AS messageAt, stored_at AS storedAt
       FROM monitored_messages
       WHERE session = ? AND phone = ? AND message_at < ?
       ORDER BY message_at DESC, message_id DESC LIMIT ?`).all(session, phone, before, limit)
-      .map((row) => ({ ...row, content: JSON.parse(row.content) }));
+      .map((row) => ({ ...row, hasMedia: Boolean(row.hasMedia), content: JSON.parse(row.content) }));
   }
 
   sentStats(session, hourStart, dayStart) {

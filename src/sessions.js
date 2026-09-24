@@ -16,11 +16,13 @@ export class SessionManager {
   #sessions = new Map();
   #creating = new Map();
 
-  constructor({ rootPath, maxSessions, store, queueLimits, logger = console }) {
+  constructor({ rootPath, maxSessions, store, queueLimits, messageMediaPath, maxMessageMediaBytes, logger = console }) {
     this.rootPath = rootPath;
     this.maxSessions = maxSessions;
     this.store = store;
     this.queueLimits = queueLimits;
+    this.messageMediaPath = messageMediaPath;
+    this.maxMessageMediaBytes = maxMessageMediaBytes;
     this.logger = logger;
   }
 
@@ -64,6 +66,8 @@ export class SessionManager {
       sessionPath: path.join(this.rootPath, id),
       session: id,
       store: this.store,
+      messageMediaPath: this.messageMediaPath,
+      maxMessageMediaBytes: this.maxMessageMediaBytes,
       logger: this.logger,
       logPrefix: `session=${id}`
     });

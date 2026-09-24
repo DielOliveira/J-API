@@ -38,6 +38,8 @@ ALLOWED_DOWNLOAD_HOSTS=public-api-pay.lytex.com.br
 MAX_PDF_SIZE_MB=20
 QUEUE_DATABASE_PATH=/opt/whatsapp-service/data/queue.sqlite
 QUEUE_FILES_PATH=/opt/whatsapp-service/data/queue-files
+MESSAGE_MEDIA_PATH=/opt/whatsapp-service/data/message-media
+MAX_MESSAGE_MEDIA_SIZE_MB=20
 SEND_DELAY_MIN_MS=5000
 SEND_DELAY_MAX_MS=12000
 MAX_SENDS_PER_HOUR=0
@@ -249,7 +251,7 @@ Para paginação, passe `before` com o `messageAt` (timestamp em milissegundos) 
 curl -X DELETE http://127.0.0.1:3001/sessions/default/message-monitor
 ```
 
-Cada registro informa `direction` (`sent` ou `received`), `messageType`, `text`, metadados seguros em `content`, `messageAt` e `storedAt`. Binários de mídia não são baixados nem gravados.
+Cada registro informa `direction` (`sent` ou `received`), `messageType`, `text`, metadados seguros em `content`, `messageAt` e `storedAt`. Fotos JPEG, PNG e WebP são baixadas para o diretório privado configurado em `MESSAGE_MEDIA_PATH`, limitadas por `MAX_MESSAGE_MEDIA_SIZE_MB`, e podem ser abertas diretamente na tabela do painel. Outros binários de mídia não são baixados.
 
 ## Cliente PHP
 
