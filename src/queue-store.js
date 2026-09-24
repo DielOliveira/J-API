@@ -38,6 +38,26 @@ export class QueueStore {
         blocked_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS blocked_recipients_date ON blocked_recipients(blocked_at DESC);
+      CREATE TABLE IF NOT EXISTS message_monitors (
+        session TEXT PRIMARY KEY,
+        phone TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS monitored_messages (
+        session TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        phone TEXT NOT NULL,
+        direction TEXT NOT NULL CHECK (direction IN ('sent', 'received')),
+        message_type TEXT NOT NULL,
+        text TEXT,
+        content TEXT NOT NULL,
+        message_at INTEGER NOT NULL,
+        stored_at INTEGER NOT NULL,
+        PRIMARY KEY (session, message_id)
+      );
+      CREATE INDEX IF NOT EXISTS monitored_messages_list
+        ON monitored_messages(session, phone, message_at DESC, message_id DESC);
     `);
     this.database.prepare("UPDATE jobs SET status = 'pending', available_at = ?, last_error = 'service restarted during processing' WHERE status = 'processing'").run(Date.now());
   }
@@ -131,6 +151,41 @@ export class QueueStore {
 
   unblockRecipient(phone) {
     return this.database.prepare('DELETE FROM blocked_recipients WHERE phone = ?').run(phone).changes > 0;
+  }
+
+  setMessageMonitor(session, phone, now = Date.now()) {
+    this.database.prepare(`INSERT INTO message_monitors (session, phone, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(session) DO UPDATE SET phone = excluded.phone, updated_at = excluded.updated_at`)
+      .run(session, phone, now, now);
+    return this.getMessageMonitor(session);
+  }
+
+  getMessageMonitor(session) {
+    return this.database.prepare(`SELECT session, phone, created_at AS createdAt, updated_at AS updatedAt
+      FROM message_monitors WHERE session = ?`).get(session) ?? null;
+  }
+
+  removeMessageMonitor(session) {
+    return this.database.prepare('DELETE FROM message_monitors WHERE session = ?').run(session).changes > 0;
+  }
+
+  saveMonitoredMessage(message) {
+    return this.database.prepare(`INSERT OR IGNORE INTO monitored_messages
+      (session, message_id, phone, direction, message_type, text, content, message_at, stored_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      message.session, message.messageId, message.phone, message.direction, message.messageType,
+      message.text, JSON.stringify(message.content), message.messageAt, message.storedAt
+    ).changes > 0;
+  }
+
+  listMonitoredMessages(session, phone, limit = 100, before = Number.MAX_SAFE_INTEGER) {
+    return this.database.prepare(`SELECT message_id AS messageId, session, phone, direction,
+      message_type AS messageType, text, content, message_at AS messageAt, stored_at AS storedAt
+      FROM monitored_messages
+      WHERE session = ? AND phone = ? AND message_at < ?
+      ORDER BY message_at DESC, message_id DESC LIMIT ?`).all(session, phone, before, limit)
+      .map((row) => ({ ...row, content: JSON.parse(row.content) }));
   }
 
   sentStats(session, hourStart, dayStart) {

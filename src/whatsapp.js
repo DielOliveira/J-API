@@ -3,6 +3,7 @@ import path from 'node:path';
 import QRCode from 'qrcode';
 import { phoneCandidates } from './phone.js';
 import pino from 'pino';
+import { monitoredMessage } from './message-monitor.js';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
@@ -49,8 +50,10 @@ export class WhatsAppClient {
   #qrGeneration = 0;
   #status = { connected: false, state: 'starting', phone: null, qrDataUrl: null };
 
-  constructor({ sessionPath, logger = console, logPrefix = '' }) {
+  constructor({ sessionPath, session, store, logger = console, logPrefix = '' }) {
     this.sessionPath = sessionPath;
+    this.session = session;
+    this.store = store;
     this.logger = logger;
     this.logPrefix = logPrefix ? ` ${logPrefix}` : '';
   }
@@ -89,6 +92,25 @@ export class WhatsAppClient {
     this.#socket = socket;
     socket.ev.on('creds.update', saveCreds);
     socket.ev.on('connection.update', (update) => void this.#onConnectionUpdate(socket, update));
+    socket.ev.on('messages.upsert', ({ messages, type, requestId }) => {
+      if (!['notify', 'append'].includes(type) || requestId) return;
+      void this.#storeMessages(socket, messages);
+    });
+  }
+
+  async #storeMessages(socket, messages) {
+    const monitor = this.store.getMessageMonitor(this.session);
+    if (!monitor) return;
+    for (const message of messages) {
+      try {
+        const record = await monitoredMessage(socket, message, monitor, this.session);
+        if (record && this.store.saveMonitoredMessage(record)) {
+          this.logger.info(`[monitor]${this.logPrefix} stored direction=${record.direction} id=${record.messageId}`);
+        }
+      } catch (error) {
+        this.logger.error(`[monitor]${this.logPrefix} could not store message: ${error.message}`);
+      }
+    }
   }
 
   async #onConnectionUpdate(socket, { connection, lastDisconnect, qr }) {

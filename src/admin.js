@@ -63,6 +63,18 @@ export function queueAdminPage(nonce) {
     .blocked-heading p { margin:2px 0 0; color:var(--muted); font-size:12px; }
     .blocked-count { color:var(--red); background:var(--red-soft); border-radius:999px; padding:4px 9px; }
     .unblock { min-height:30px; margin:0; padding:4px 9px; border-color:#d9a7a3; background:#fff; color:var(--red); font-size:12px; }
+    .monitor-panel { margin-top:20px; background:var(--paper); border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow:0 2px 8px #13251b0a; }
+    .monitor-heading { padding:15px 17px 8px; }
+    .monitor-heading h2 { margin:0; font-size:17px; }
+    .monitor-heading p { margin:2px 0 0; color:var(--muted); font-size:12px; }
+    .monitor-controls { display:flex; flex-wrap:wrap; align-items:end; gap:10px; padding:8px 17px 15px; border-bottom:1px solid var(--line); }
+    .monitor-controls label { min-width:180px; }
+    .monitor-controls input { width:210px; }
+    .monitor-controls button { margin:0; }
+    #monitor-stop { color:var(--red); background:#fff; border-color:#d9a7a3; }
+    #monitor-status { margin-left:auto; color:var(--muted); font-size:12px; }
+    .message-text { max-width:520px; overflow:hidden; text-overflow:ellipsis; }
+    .received { color:var(--blue); background:var(--blue-soft); }.sent-message { color:var(--green); background:var(--green-soft); }
     footer { padding:13px 2px; color:var(--muted); font-size:12px; }
     @media (max-width:700px) { header div { align-items:flex-start; flex-direction:column; }.date-panel { align-items:stretch; flex-direction:column; }.date-panel p { margin-right:0; }.cards { grid-template-columns:repeat(2,1fr); } main { padding:14px; }.controls label { flex:1; min-width:130px; } button { margin-left:0; width:100%; }.session-card button { width:auto; } }
   </style>
@@ -98,6 +110,20 @@ export function queueAdminPage(nonce) {
         <div class="empty" id="blocked-empty">Nenhum destinatário bloqueado.</div>
       </div>
     </section>
+    <section class="monitor-panel" aria-labelledby="monitor-title">
+      <div class="monitor-heading"><h2 id="monitor-title">Monitor de conversa</h2><p>Armazena mensagens novas enviadas e recebidas de um número específico por sessão.</p></div>
+      <form class="monitor-controls" id="monitor-form">
+        <label>Sessão<select id="monitor-session" required></select></label>
+        <label>Número com DDI<input id="monitor-phone" required inputmode="numeric" pattern="[1-9][0-9]{9,14}" maxlength="15" placeholder="5562999999999"></label>
+        <button id="monitor-save" type="submit">Ativar monitoramento</button>
+        <button id="monitor-stop" type="button">Desativar</button>
+        <span id="monitor-status">Selecione uma sessão.</span>
+      </form>
+      <div class="table-wrap">
+        <table><thead><tr><th>Direção</th><th>Data</th><th>Tipo</th><th>Mensagem</th><th>ID</th></tr></thead><tbody id="messages"></tbody></table>
+        <div class="empty" id="messages-empty">Nenhuma mensagem armazenada para esta sessão.</div>
+      </div>
+    </section>
     <footer>Atualização automática a cada 10 segundos · histórico do dia selecionado</footer>
   </main>
   <dialog id="qr-dialog" aria-labelledby="qr-title">
@@ -114,7 +140,7 @@ export function queueAdminPage(nonce) {
     </section>
   </dialog>
   <script nonce="${nonce}">
-    const state = { jobs: [], sessions: [], blockedRecipients: [], loading: false, qrTimer: null };
+    const state = { jobs: [], sessions: [], blockedRecipients: [], messages: [], monitor: null, loading: false, monitorLoading: false, qrTimer: null };
     const byId = (id) => document.getElementById(id);
     const labels = { pending:'Pendente', processing:'Processando', sent:'Enviada', failed:'Falha', text:'Texto', pix:'PIX', pdf:'PDF' };
     const maskPhone = (phone) => phone.length < 8 ? '••••' : phone.slice(0,4) + '•••••' + phone.slice(-4);
@@ -163,6 +189,37 @@ export function queueAdminPage(nonce) {
       }
       byId('empty').hidden=jobs.length!==0; byId('jobs').hidden=jobs.length===0;
     }
+    function renderMessages() {
+      const body=byId('messages'); body.replaceChildren();
+      for(const message of state.messages) {
+        const row=document.createElement('tr');
+        const directionCell=cell(row,''); const badge=document.createElement('span'); badge.className='badge '+(message.direction==='sent'?'sent-message':'received'); badge.textContent=message.direction==='sent'?'Enviada':'Recebida'; directionCell.append(badge);
+        cell(row,date(message.messageAt)); cell(row,message.messageType);
+        const text=cell(row,message.text||'—','message-text'); if(message.text) text.title=message.text;
+        cell(row,message.messageId); body.append(row);
+      }
+      byId('messages-empty').hidden=state.messages.length!==0; body.hidden=state.messages.length===0;
+      byId('monitor-phone').value=state.monitor?.phone||'';
+      byId('monitor-stop').disabled=!state.monitor;
+      byId('monitor-status').textContent=state.monitor?'Monitorando '+maskPhone(state.monitor.phone)+'.':'Monitoramento desativado.';
+    }
+
+    async function loadMonitor() {
+      if(state.monitorLoading) return; const session=byId('monitor-session').value;
+      if(!session) { state.monitor=null; state.messages=[]; renderMessages(); return; }
+      state.monitorLoading=true;
+      try {
+        const [monitorResponse,messagesResponse]=await Promise.all([
+          fetch('/sessions/'+encodeURIComponent(session)+'/message-monitor',{cache:'no-store'}),
+          fetch('/sessions/'+encodeURIComponent(session)+'/messages?limit=100',{cache:'no-store'})
+        ]);
+        const monitorResult=await monitorResponse.json(); const messagesResult=await messagesResponse.json();
+        if(!monitorResponse.ok) throw new Error(monitorResult.error||'Falha ao consultar o monitoramento');
+        if(!messagesResponse.ok) throw new Error(messagesResult.error||'Falha ao consultar as mensagens');
+        state.monitor=monitorResult.monitor; state.messages=messagesResult.messages; renderMessages();
+      } catch(error) { byId('monitor-status').textContent='Erro: '+error.message; }
+      finally { state.monitorLoading=false; }
+    }
 
     async function load() {
       if(state.loading) return; state.loading=true; const button=byId('refresh'); button.disabled=true;
@@ -172,9 +229,12 @@ export function queueAdminPage(nonce) {
         const {sessions}=await sessionResponse.json(); const {blockedRecipients}=await blockedResponse.json(); state.sessions=sessions; state.blockedRecipients=blockedRecipients;
         const current=byId('session-filter').value; const select=byId('session-filter'); select.replaceChildren(new Option('Todas',''));
         for(const session of sessions) select.add(new Option(session.id,session.id)); select.value=current;
+        const monitorSelect=byId('monitor-session'); const monitoredSession=monitorSelect.value; monitorSelect.replaceChildren();
+        for(const session of sessions) monitorSelect.add(new Option(session.id,session.id));
+        monitorSelect.value=sessions.some((session)=>session.id===monitoredSession)?monitoredSession:(sessions[0]?.id||'');
         const range=selectedRange(); const query=new URLSearchParams({start:String(range.start),end:String(range.end)});
         const responses=await Promise.all(sessions.map(async(session)=>{const response=await fetch('/sessions/'+encodeURIComponent(session.id)+'/queue?'+query,{cache:'no-store'}); if(!response.ok) throw new Error('Falha ao consultar '+session.id); return (await response.json()).queue;}));
-        state.jobs=responses.flat().sort((a,b)=>b.createdAt-a.createdAt); render();
+        state.jobs=responses.flat().sort((a,b)=>b.createdAt-a.createdAt); render(); await loadMonitor();
         byId('connection').textContent='Atualizado às '+new Intl.DateTimeFormat('pt-BR',{timeStyle:'medium'}).format(new Date());
       } catch(error) { byId('connection').textContent='Erro: '+error.message; }
       finally { state.loading=false; button.disabled=false; }
@@ -195,6 +255,26 @@ export function queueAdminPage(nonce) {
         const current=state.sessions.find((item)=>item.id===session); if(current) { current.connected=false; current.state='reconnecting'; } render(); setTimeout(load,1500);
       } catch(error) { alert('Erro: '+error.message); }
     }
+    async function saveMonitor(event) {
+      event.preventDefault(); const session=byId('monitor-session').value; const phone=byId('monitor-phone');
+      if(!session||!phone.reportValidity()) return; const button=byId('monitor-save'); button.disabled=true;
+      try {
+        const response=await fetch('/sessions/'+encodeURIComponent(session)+'/message-monitor',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({phone:phone.value})});
+        const result=await response.json(); if(!response.ok) throw new Error(result.error||'Falha ao ativar o monitoramento');
+        state.monitor=result.monitor; await loadMonitor();
+      } catch(error) { byId('monitor-status').textContent='Erro: '+error.message; }
+      finally { button.disabled=false; }
+    }
+    async function stopMonitor() {
+      const session=byId('monitor-session').value; if(!session||!state.monitor) return;
+      if(!confirm('Desativar o monitoramento da sessão '+session+'? As mensagens já armazenadas serão mantidas.')) return;
+      const button=byId('monitor-stop'); button.disabled=true;
+      try {
+        const response=await fetch('/sessions/'+encodeURIComponent(session)+'/message-monitor',{method:'DELETE'}); const result=await response.json();
+        if(!response.ok) throw new Error(result.error||'Falha ao desativar o monitoramento'); state.monitor=null; renderMessages();
+      } catch(error) { byId('monitor-status').textContent='Erro: '+error.message; }
+      finally { button.disabled=false; }
+    }
     function stopQrPolling() { if(state.qrTimer) clearTimeout(state.qrTimer); state.qrTimer=null; byId('qr-image').removeAttribute('src'); byId('qr-image').hidden=true; }
     async function loadQr(session) {
       if(!byId('qr-dialog').open) return;
@@ -214,6 +294,7 @@ export function queueAdminPage(nonce) {
     function openQr() { stopQrPolling(); byId('qr-title').textContent='Conectar WhatsApp'; byId('qr-status').textContent='Use um nome novo para criar outra sessão ou informe uma sessão existente.'; byId('qr-session').value=byId('session-filter').value; byId('qr-dialog').showModal(); byId('qr-session').focus(); }
     byId('date-filter').value=localDateValue(); byId('date-filter').addEventListener('change',load);
     byId('session-filter').addEventListener('change',render); byId('status-filter').addEventListener('change',render); byId('refresh').addEventListener('click',load);
+    byId('monitor-session').addEventListener('change',loadMonitor); byId('monitor-form').addEventListener('submit',saveMonitor); byId('monitor-stop').addEventListener('click',stopMonitor);
     byId('qr-open').addEventListener('click',openQr); byId('qr-form').addEventListener('submit',(event)=>{event.preventDefault(); beginQr();}); byId('qr-close').addEventListener('click',()=>byId('qr-dialog').close()); byId('qr-dialog').addEventListener('close',stopQrPolling);
     load(); setInterval(load,10000);
   </script>

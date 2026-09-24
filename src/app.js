@@ -112,6 +112,14 @@ function queueList(request, queue) {
   return queue.list(Number(rawLimit));
 }
 
+function monitoredMessageList(request, store, session, phone) {
+  const rawLimit = request.query.limit ?? '100';
+  const rawBefore = request.query.before ?? String(Number.MAX_SAFE_INTEGER);
+  if (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > 500) throw new Error('limit must be between 1 and 500');
+  if (!/^\d+$/.test(rawBefore) || !Number.isSafeInteger(Number(rawBefore))) throw new Error('before must be a timestamp in milliseconds');
+  return store.listMonitoredMessages(session, phone, Number(rawLimit), Number(rawBefore));
+}
+
 export function createApp({ sessions, store = sessions.store, config, logger = console }) {
   const app = express();
   app.disable('x-powered-by');
@@ -248,6 +256,41 @@ export function createApp({ sessions, store = sessions.store, config, logger = c
   app.post('/sessions/:session/send-text', sendTextHandler);
   app.post('/sessions/:session/send-pix', sendPixHandler);
   app.post('/sessions/:session/send-file', sendFileHandler);
+
+  app.put('/sessions/:session/message-monitor', async (request, response, next) => {
+    try {
+      const id = sessionId(request);
+      await existingSession(sessions, id);
+      const monitor = store.setMessageMonitor(id, validatePhone(request.body?.phone));
+      response.json({ success: true, monitor });
+    } catch (error) { next(error); }
+  });
+
+  app.get('/sessions/:session/message-monitor', async (request, response, next) => {
+    try {
+      const id = sessionId(request);
+      await existingSession(sessions, id);
+      response.json({ session: id, monitor: store.getMessageMonitor(id) });
+    } catch (error) { next(error); }
+  });
+
+  app.delete('/sessions/:session/message-monitor', async (request, response, next) => {
+    try {
+      const id = sessionId(request);
+      await existingSession(sessions, id);
+      response.json({ success: true, session: id, removed: store.removeMessageMonitor(id) });
+    } catch (error) { next(error); }
+  });
+
+  app.get('/sessions/:session/messages', async (request, response, next) => {
+    try {
+      const id = sessionId(request);
+      await existingSession(sessions, id);
+      const monitor = store.getMessageMonitor(id);
+      if (!monitor) return response.json({ session: id, phone: null, messages: [] });
+      response.json({ session: id, phone: monitor.phone, messages: monitoredMessageList(request, store, id, monitor.phone) });
+    } catch (error) { next(error); }
+  });
 
   app.get('/sessions/:session/queue', async (request, response, next) => {
     try {

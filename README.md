@@ -1,6 +1,6 @@
 # Local WhatsApp Service
 
-Serviço HTTP pequeno, multi-sessão e restrito a `127.0.0.1`, para envio de texto, PIX e PDF pelo WhatsApp. Usa [Baileys](https://github.com/WhiskeySockets/Baileys) e uma fila persistente SQLite, sem navegador headless, Redis, Docker, recebimento de mensagens ou webhooks.
+Serviço HTTP pequeno, multi-sessão e restrito a `127.0.0.1`, para envio de texto, PIX e PDF pelo WhatsApp. Usa [Baileys](https://github.com/WhiskeySockets/Baileys) e uma fila persistente SQLite, sem navegador headless, Redis ou Docker. Pode monitorar uma conversa individual por sessão e persistir suas mensagens novas.
 
 > **Aviso:** Baileys usa o protocolo do WhatsApp Web e não é uma API oficial da Meta. Mudanças no WhatsApp podem interromper o serviço e o uso automatizado pode ter implicações nos termos/políticas da plataforma. Não use para spam; obtenha consentimento dos destinatários. Para garantias comerciais, considere a WhatsApp Business Platform oficial.
 
@@ -223,6 +223,33 @@ curl -s http://127.0.0.1:3001/sessions/default/queue/SEU_JOB_ID
 Os estados são `pending`, `processing`, `sent` e `failed`. Somente `sent` possui `whatsappMessageId`. Erros temporários são tentados novamente com espera exponencial; erros definitivos e o esgotamento das tentativas deixam o job como `failed` para diagnóstico.
 
 Cada sessão tem sua própria fila: um envio lento em `financeiro` não bloqueia `atendimento`. Para PDF em outra sessão, use `POST /sessions/financeiro/send-file`.
+
+## Monitorar uma conversa
+
+Cada sessão pode monitorar um número individual. Somente mensagens novas observadas depois da ativação são armazenadas; mensagens de grupos e sincronizações retroativas de histórico são ignoradas.
+
+Ative ou troque o número monitorado:
+
+```bash
+curl -X PUT http://127.0.0.1:3001/sessions/default/message-monitor \
+  -H 'Content-Type: application/json' \
+  -d '{"phone":"5562999999999"}'
+```
+
+Consulte a configuração e as mensagens, da mais recente para a mais antiga:
+
+```bash
+curl http://127.0.0.1:3001/sessions/default/message-monitor
+curl 'http://127.0.0.1:3001/sessions/default/messages?limit=100'
+```
+
+Para paginação, passe `before` com o `messageAt` (timestamp em milissegundos) mais antigo já recebido. Para parar de capturar, sem apagar o que já foi armazenado:
+
+```bash
+curl -X DELETE http://127.0.0.1:3001/sessions/default/message-monitor
+```
+
+Cada registro informa `direction` (`sent` ou `received`), `messageType`, `text`, metadados seguros em `content`, `messageAt` e `storedAt`. Binários de mídia não são baixados nem gravados.
 
 ## Cliente PHP
 

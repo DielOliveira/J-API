@@ -62,6 +62,8 @@ export class SessionManager {
   async #create(id) {
     const whatsapp = new WhatsAppClient({
       sessionPath: path.join(this.rootPath, id),
+      session: id,
+      store: this.store,
       logger: this.logger,
       logPrefix: `session=${id}`
     });

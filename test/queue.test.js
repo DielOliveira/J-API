@@ -161,3 +161,29 @@ test('processing jobs return to pending after reopening the store', async (t) =>
   assert.equal(store.get(queued.job.id).status, 'pending');
   store.close();
 });
+
+test('message monitors and captured messages are persistent and deduplicated', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'j-api-monitor-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const databasePath = path.join(root, 'queue.sqlite');
+  let store = new QueueStore(databasePath);
+  assert.equal(store.getMessageMonitor('default'), null);
+  store.setMessageMonitor('default', '5562999999999', 100);
+  const message = {
+    session: 'default', messageId: 'wa-1', phone: '5562999999999', direction: 'received',
+    messageType: 'conversation', text: 'Olá', content: { text: 'Olá' }, messageAt: 200, storedAt: 201
+  };
+  assert.equal(store.saveMonitoredMessage(message), true);
+  assert.equal(store.saveMonitoredMessage(message), false);
+  store.close();
+
+  store = new QueueStore(databasePath);
+  assert.equal(store.getMessageMonitor('default').phone, '5562999999999');
+  assert.deepEqual(store.listMonitoredMessages('default', '5562999999999'), [{
+    messageId: 'wa-1', session: 'default', phone: '5562999999999', direction: 'received',
+    messageType: 'conversation', text: 'Olá', content: { text: 'Olá' }, messageAt: 200, storedAt: 201
+  }]);
+  assert.equal(store.removeMessageMonitor('default'), true);
+  assert.equal(store.getMessageMonitor('default'), null);
+  store.close();
+});

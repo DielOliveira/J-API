@@ -7,6 +7,8 @@ async function withServer(whatsapp, run, { initialBlocked = [] } = {}) {
   let sequence = 0;
   const jobs = new Map();
   const blockedRecipients = new Map(initialBlocked.map((recipient) => [recipient.phone, recipient]));
+  const monitors = new Map();
+  const monitoredMessages = [];
   const queue = {
     size: 0,
     blockedRecipient: (phone) => blockedRecipients.get(phone) ?? null,
@@ -27,7 +29,17 @@ async function withServer(whatsapp, run, { initialBlocked = [] } = {}) {
   };
   const store = {
     listBlockedRecipients: () => [...blockedRecipients.values()],
-    unblockRecipient: (phone) => blockedRecipients.delete(phone)
+    unblockRecipient: (phone) => blockedRecipients.delete(phone),
+    setMessageMonitor: (session, phone) => {
+      const monitor = { session, phone, createdAt: 1, updatedAt: 1 };
+      monitors.set(session, monitor);
+      return monitor;
+    },
+    getMessageMonitor: (session) => monitors.get(session) ?? null,
+    removeMessageMonitor: (session) => monitors.delete(session),
+    listMonitoredMessages: (session, phone, limit, before) => monitoredMessages
+      .filter((message) => message.session === session && message.phone === phone && message.messageAt < before)
+      .slice(0, limit)
   };
   const app = createApp({
     sessions,
@@ -77,6 +89,12 @@ test('queue admin panel is served with restrictive browser security headers', as
     assert.match(html, /renderSessions/);
     assert.match(html, /Desconectar/);
     assert.match(html, /Destinatários bloqueados/);
+    assert.match(html, /Monitor de conversa/);
+    assert.match(html, /id="monitor-session"/);
+    assert.match(html, /id="monitor-phone"/);
+    assert.match(html, /\/message-monitor/);
+    assert.match(html, /\/messages\?limit=100/);
+    assert.match(html, /Ativar monitoramento/);
     assert.match(html, /Desbloquear/);
     assert.match(html, /\/blocked-recipients/);
     assert.match(html, /\/logout/);
@@ -211,5 +229,26 @@ test('named session routes reject invalid and unknown identifiers', async () => 
   await withServer({ status: () => ({}), qr: () => ({}) }, async (base) => {
     assert.equal((await fetch(`${base}/sessions/UPPER/status`)).status, 422);
     assert.equal((await fetch(`${base}/sessions/unknown/status`)).status, 404);
+  });
+});
+
+test('message monitor can be configured, queried and disabled per session', async () => {
+  await withServer({ status: () => ({}), qr: () => ({}) }, async (base) => {
+    const enabled = await fetch(`${base}/sessions/default/message-monitor`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ phone: '5562999999999' })
+    });
+    assert.equal(enabled.status, 200);
+    assert.equal((await enabled.json()).monitor.phone, '5562999999999');
+
+    const status = await (await fetch(`${base}/sessions/default/message-monitor`)).json();
+    assert.equal(status.monitor.phone, '5562999999999');
+    assert.deepEqual(await (await fetch(`${base}/sessions/default/messages`)).json(), {
+      session: 'default', phone: '5562999999999', messages: []
+    });
+    assert.equal((await fetch(`${base}/sessions/default/messages?limit=501`)).status, 422);
+
+    const disabled = await fetch(`${base}/sessions/default/message-monitor`, { method: 'DELETE' });
+    assert.equal((await disabled.json()).removed, true);
   });
 });
