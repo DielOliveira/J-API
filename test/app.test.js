@@ -32,11 +32,12 @@ async function withServer(whatsapp, run, { initialBlocked = [] } = {}) {
     unblockRecipient: (phone) => blockedRecipients.delete(phone),
     setMessageMonitor: (session, phone) => {
       const monitor = { session, phone, createdAt: 1, updatedAt: 1 };
-      monitors.set(session, monitor);
+      monitors.set(`${session}:${phone}`, monitor);
       return monitor;
     },
-    getMessageMonitor: (session) => monitors.get(session) ?? null,
-    removeMessageMonitor: (session) => monitors.delete(session),
+    getMessageMonitors: (session) => [...monitors.values()].filter((monitor) => monitor.session === session),
+    removeMessageMonitor: (session, phone) => monitors.delete(`${session}:${phone}`),
+    removeMessageMonitors: (session) => { let removed=0; for(const [key,monitor] of monitors) if(monitor.session===session) { monitors.delete(key); removed++; } return removed; },
     listMonitoredMessages: (session, phone, limit, before) => monitoredMessages
       .filter((message) => message.session === session && message.phone === phone && message.messageAt < before)
       .slice(0, limit),
@@ -243,13 +244,26 @@ test('message monitor can be configured, queried and disabled per session', asyn
     assert.equal((await enabled.json()).monitor.phone, '5562999999999');
 
     const status = await (await fetch(`${base}/sessions/default/message-monitor`)).json();
-    assert.equal(status.monitor.phone, '5562999999999');
+    assert.deepEqual(status.monitors.map((monitor) => monitor.phone), ['5562999999999']);
     assert.deepEqual(await (await fetch(`${base}/sessions/default/messages`)).json(), {
-      session: 'default', phone: '5562999999999', messages: []
+      session: 'default', phone: null, messages: []
     });
     assert.equal((await fetch(`${base}/sessions/default/messages?limit=501`)).status, 422);
 
     const disabled = await fetch(`${base}/sessions/default/message-monitor`, { method: 'DELETE' });
     assert.equal((await disabled.json()).removed, true);
+  });
+});
+
+test('message monitor accepts multiple numbers and removes one individually', async () => {
+  await withServer({ status: () => ({}), qr: () => ({}) }, async (base) => {
+    for(const phone of ['5562999999999','5562888888888']) await fetch(`${base}/sessions/default/message-monitor`, {
+      method:'PUT', headers:{'content-type':'application/json'}, body:JSON.stringify({phone})
+    });
+    const status=await (await fetch(`${base}/sessions/default/message-monitor`)).json();
+    assert.equal(status.monitors.length,2);
+    const removed=await fetch(`${base}/sessions/default/message-monitor/5562999999999`,{method:'DELETE'});
+    assert.equal((await removed.json()).removed,true);
+    assert.deepEqual((await (await fetch(`${base}/sessions/default/message-monitor`)).json()).monitors.map((monitor)=>monitor.phone),['5562888888888']);
   });
 });

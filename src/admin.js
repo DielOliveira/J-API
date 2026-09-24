@@ -73,6 +73,9 @@ export function queueAdminPage(nonce) {
     .monitor-controls button { margin:0; }
     #monitor-stop { color:var(--red); background:#fff; border-color:#d9a7a3; }
     #monitor-status { margin-left:auto; color:var(--muted); font-size:12px; }
+    .monitor-numbers { display:flex; flex-wrap:wrap; gap:8px; padding:0 17px 15px; }
+    .monitor-number { display:flex; align-items:center; gap:7px; padding:6px 8px 6px 11px; border-radius:999px; background:var(--green-soft); color:var(--green); font-weight:600; }
+    .monitor-number button { min-height:25px; padding:1px 7px; margin:0; border-color:#b9d4c4; background:#fff; color:var(--red); }
     .message-text { max-width:520px; overflow:hidden; text-overflow:ellipsis; }
     .message-image { display:block; width:54px; height:54px; border-radius:7px; object-fit:cover; border:1px solid var(--line); }
     .received { color:var(--blue); background:var(--blue-soft); }.sent-message { color:var(--green); background:var(--green-soft); }
@@ -117,9 +120,10 @@ export function queueAdminPage(nonce) {
         <label>Sessão<select id="monitor-session" required></select></label>
         <label>Número com DDI<input id="monitor-phone" required inputmode="numeric" pattern="[1-9][0-9]{9,14}" maxlength="15" placeholder="5562999999999"></label>
         <button id="monitor-save" type="submit">Ativar monitoramento</button>
-        <button id="monitor-stop" type="button">Desativar</button>
+        <button id="monitor-stop" type="button">Desativar todos</button>
         <span id="monitor-status">Selecione uma sessão.</span>
       </form>
+      <div class="monitor-numbers" id="monitor-numbers"></div>
       <div class="table-wrap">
         <table><thead><tr><th>Direção</th><th>Data</th><th>Tipo</th><th>Foto</th><th>Mensagem</th><th>ID</th></tr></thead><tbody id="messages"></tbody></table>
         <div class="empty" id="messages-empty">Nenhuma mensagem armazenada para esta sessão.</div>
@@ -141,7 +145,7 @@ export function queueAdminPage(nonce) {
     </section>
   </dialog>
   <script nonce="${nonce}">
-    const state = { jobs: [], sessions: [], blockedRecipients: [], messages: [], monitor: null, loading: false, monitorLoading: false, qrTimer: null };
+    const state = { jobs: [], sessions: [], blockedRecipients: [], messages: [], monitors: [], loading: false, monitorLoading: false, qrTimer: null };
     const byId = (id) => document.getElementById(id);
     const labels = { pending:'Pendente', processing:'Processando', sent:'Enviada', failed:'Falha', text:'Texto', pix:'PIX', pdf:'PDF' };
     const maskPhone = (phone) => phone.length < 8 ? '••••' : phone.slice(0,4) + '•••••' + phone.slice(-4);
@@ -201,14 +205,15 @@ export function queueAdminPage(nonce) {
         cell(row,message.messageId); body.append(row);
       }
       byId('messages-empty').hidden=state.messages.length!==0; body.hidden=state.messages.length===0;
-      byId('monitor-phone').value=state.monitor?.phone||'';
-      byId('monitor-stop').disabled=!state.monitor;
-      byId('monitor-status').textContent=state.monitor?'Monitorando '+maskPhone(state.monitor.phone)+'.':'Monitoramento desativado.';
+      const numbers=byId('monitor-numbers'); numbers.replaceChildren();
+      for(const monitor of state.monitors) { const item=document.createElement('span'); item.className='monitor-number'; const value=document.createElement('span'); value.textContent=maskPhone(monitor.phone); const remove=document.createElement('button'); remove.type='button'; remove.textContent='×'; remove.title='Remover este número'; remove.addEventListener('click',()=>removeMonitor(monitor.phone)); item.append(value,remove); numbers.append(item); }
+      byId('monitor-stop').disabled=state.monitors.length===0;
+      byId('monitor-status').textContent=state.monitors.length?state.monitors.length+' número(s) monitorado(s).':'Monitoramento desativado.';
     }
 
     async function loadMonitor() {
       if(state.monitorLoading) return; const session=byId('monitor-session').value;
-      if(!session) { state.monitor=null; state.messages=[]; renderMessages(); return; }
+      if(!session) { state.monitors=[]; state.messages=[]; renderMessages(); return; }
       state.monitorLoading=true;
       try {
         const [monitorResponse,messagesResponse]=await Promise.all([
@@ -218,7 +223,7 @@ export function queueAdminPage(nonce) {
         const monitorResult=await monitorResponse.json(); const messagesResult=await messagesResponse.json();
         if(!monitorResponse.ok) throw new Error(monitorResult.error||'Falha ao consultar o monitoramento');
         if(!messagesResponse.ok) throw new Error(messagesResult.error||'Falha ao consultar as mensagens');
-        state.monitor=monitorResult.monitor; state.messages=messagesResult.messages; renderMessages();
+        state.monitors=monitorResult.monitors; state.messages=messagesResult.messages; renderMessages();
       } catch(error) { byId('monitor-status').textContent='Erro: '+error.message; }
       finally { state.monitorLoading=false; }
     }
@@ -263,19 +268,27 @@ export function queueAdminPage(nonce) {
       try {
         const response=await fetch('/sessions/'+encodeURIComponent(session)+'/message-monitor',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({phone:phone.value})});
         const result=await response.json(); if(!response.ok) throw new Error(result.error||'Falha ao ativar o monitoramento');
-        state.monitor=result.monitor; await loadMonitor();
+        state.monitors=result.monitors; phone.value=''; await loadMonitor();
       } catch(error) { byId('monitor-status').textContent='Erro: '+error.message; }
       finally { button.disabled=false; }
     }
     async function stopMonitor() {
-      const session=byId('monitor-session').value; if(!session||!state.monitor) return;
-      if(!confirm('Desativar o monitoramento da sessão '+session+'? As mensagens já armazenadas serão mantidas.')) return;
+      const session=byId('monitor-session').value; if(!session||state.monitors.length===0) return;
+      if(!confirm('Desativar todos os números monitorados da sessão '+session+'? As mensagens já armazenadas serão mantidas.')) return;
       const button=byId('monitor-stop'); button.disabled=true;
       try {
         const response=await fetch('/sessions/'+encodeURIComponent(session)+'/message-monitor',{method:'DELETE'}); const result=await response.json();
-        if(!response.ok) throw new Error(result.error||'Falha ao desativar o monitoramento'); state.monitor=null; renderMessages();
+        if(!response.ok) throw new Error(result.error||'Falha ao desativar o monitoramento'); state.monitors=[]; renderMessages();
       } catch(error) { byId('monitor-status').textContent='Erro: '+error.message; }
       finally { button.disabled=false; }
+    }
+    async function removeMonitor(phone) {
+      const session=byId('monitor-session').value;
+      if(!confirm('Parar de monitorar '+maskPhone(phone)+'? As mensagens armazenadas serão mantidas.')) return;
+      try {
+        const response=await fetch('/sessions/'+encodeURIComponent(session)+'/message-monitor/'+encodeURIComponent(phone),{method:'DELETE'}); const result=await response.json();
+        if(!response.ok) throw new Error(result.error||'Falha ao remover o número'); await loadMonitor();
+      } catch(error) { byId('monitor-status').textContent='Erro: '+error.message; }
     }
     function stopQrPolling() { if(state.qrTimer) clearTimeout(state.qrTimer); state.qrTimer=null; byId('qr-image').removeAttribute('src'); byId('qr-image').hidden=true; }
     async function loadQr(session) {

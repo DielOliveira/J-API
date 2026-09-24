@@ -112,7 +112,7 @@ function queueList(request, queue) {
   return queue.list(Number(rawLimit));
 }
 
-function monitoredMessageList(request, store, session, phone) {
+function monitoredMessageList(request, store, session, phone = null) {
   const rawLimit = request.query.limit ?? '100';
   const rawBefore = request.query.before ?? String(Number.MAX_SAFE_INTEGER);
   if (!/^\d+$/.test(rawLimit) || Number(rawLimit) < 1 || Number(rawLimit) > 500) throw new Error('limit must be between 1 and 500');
@@ -262,7 +262,7 @@ export function createApp({ sessions, store = sessions.store, config, logger = c
       const id = sessionId(request);
       await existingSession(sessions, id);
       const monitor = store.setMessageMonitor(id, validatePhone(request.body?.phone));
-      response.json({ success: true, monitor });
+      response.json({ success: true, monitor, monitors: store.getMessageMonitors(id) });
     } catch (error) { next(error); }
   });
 
@@ -270,7 +270,8 @@ export function createApp({ sessions, store = sessions.store, config, logger = c
     try {
       const id = sessionId(request);
       await existingSession(sessions, id);
-      response.json({ session: id, monitor: store.getMessageMonitor(id) });
+      const monitors = store.getMessageMonitors(id);
+      response.json({ session: id, monitors });
     } catch (error) { next(error); }
   });
 
@@ -278,7 +279,16 @@ export function createApp({ sessions, store = sessions.store, config, logger = c
     try {
       const id = sessionId(request);
       await existingSession(sessions, id);
-      response.json({ success: true, session: id, removed: store.removeMessageMonitor(id) });
+      response.json({ success: true, session: id, removed: store.removeMessageMonitors(id) > 0 });
+    } catch (error) { next(error); }
+  });
+
+  app.delete('/sessions/:session/message-monitor/:phone', async (request, response, next) => {
+    try {
+      const id = sessionId(request);
+      await existingSession(sessions, id);
+      const phone = validatePhone(request.params.phone);
+      response.json({ success: true, session: id, phone, removed: store.removeMessageMonitor(id, phone) });
     } catch (error) { next(error); }
   });
 
@@ -286,13 +296,12 @@ export function createApp({ sessions, store = sessions.store, config, logger = c
     try {
       const id = sessionId(request);
       await existingSession(sessions, id);
-      const monitor = store.getMessageMonitor(id);
-      if (!monitor) return response.json({ session: id, phone: null, messages: [] });
-      const messages = monitoredMessageList(request, store, id, monitor.phone).map((message) => ({
+      const phone = request.query.phone === undefined ? null : validatePhone(request.query.phone);
+      const messages = monitoredMessageList(request, store, id, phone).map((message) => ({
         ...message,
         ...(message.hasMedia ? { mediaUrl: `/sessions/${encodeURIComponent(id)}/messages/${encodeURIComponent(message.messageId)}/media` } : {})
       }));
-      response.json({ session: id, phone: monitor.phone, messages });
+      response.json({ session: id, phone, messages });
     } catch (error) { next(error); }
   });
 

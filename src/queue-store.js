@@ -39,10 +39,11 @@ export class QueueStore {
       );
       CREATE INDEX IF NOT EXISTS blocked_recipients_date ON blocked_recipients(blocked_at DESC);
       CREATE TABLE IF NOT EXISTS message_monitors (
-        session TEXT PRIMARY KEY,
+        session TEXT NOT NULL,
         phone TEXT NOT NULL,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (session, phone)
       );
       CREATE TABLE IF NOT EXISTS monitored_messages (
         session TEXT NOT NULL,
@@ -59,6 +60,23 @@ export class QueueStore {
       CREATE INDEX IF NOT EXISTS monitored_messages_list
         ON monitored_messages(session, phone, message_at DESC, message_id DESC);
     `);
+    const monitorColumns = this.database.prepare('PRAGMA table_info(message_monitors)').all();
+    const legacyMonitorKey = monitorColumns.find((column) => column.name === 'session')?.pk === 1
+      && monitorColumns.find((column) => column.name === 'phone')?.pk === 0;
+    if (legacyMonitorKey) this.database.transaction(() => {
+      this.database.exec(`
+        ALTER TABLE message_monitors RENAME TO message_monitors_legacy;
+        CREATE TABLE message_monitors (
+          session TEXT NOT NULL,
+          phone TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (session, phone)
+        );
+        INSERT INTO message_monitors SELECT session, phone, created_at, updated_at FROM message_monitors_legacy;
+        DROP TABLE message_monitors_legacy;
+      `);
+    })();
     const messageColumns = new Set(this.database.prepare('PRAGMA table_info(monitored_messages)').all().map((column) => column.name));
     if (!messageColumns.has('media_path')) this.database.exec('ALTER TABLE monitored_messages ADD COLUMN media_path TEXT');
     if (!messageColumns.has('media_mime')) this.database.exec('ALTER TABLE monitored_messages ADD COLUMN media_mime TEXT');
@@ -160,18 +178,27 @@ export class QueueStore {
   setMessageMonitor(session, phone, now = Date.now()) {
     this.database.prepare(`INSERT INTO message_monitors (session, phone, created_at, updated_at)
       VALUES (?, ?, ?, ?)
-      ON CONFLICT(session) DO UPDATE SET phone = excluded.phone, updated_at = excluded.updated_at`)
+      ON CONFLICT(session, phone) DO UPDATE SET updated_at = excluded.updated_at`)
       .run(session, phone, now, now);
-    return this.getMessageMonitor(session);
+    return this.getMessageMonitor(session, phone);
   }
 
-  getMessageMonitor(session) {
+  getMessageMonitor(session, phone) {
     return this.database.prepare(`SELECT session, phone, created_at AS createdAt, updated_at AS updatedAt
-      FROM message_monitors WHERE session = ?`).get(session) ?? null;
+      FROM message_monitors WHERE session = ? AND phone = ?`).get(session, phone) ?? null;
   }
 
-  removeMessageMonitor(session) {
-    return this.database.prepare('DELETE FROM message_monitors WHERE session = ?').run(session).changes > 0;
+  getMessageMonitors(session) {
+    return this.database.prepare(`SELECT session, phone, created_at AS createdAt, updated_at AS updatedAt
+      FROM message_monitors WHERE session = ? ORDER BY created_at, phone`).all(session);
+  }
+
+  removeMessageMonitor(session, phone) {
+    return this.database.prepare('DELETE FROM message_monitors WHERE session = ? AND phone = ?').run(session, phone).changes > 0;
+  }
+
+  removeMessageMonitors(session) {
+    return this.database.prepare('DELETE FROM message_monitors WHERE session = ?').run(session).changes;
   }
 
   saveMonitoredMessage(message) {
@@ -194,12 +221,14 @@ export class QueueStore {
   }
 
   listMonitoredMessages(session, phone, limit = 100, before = Number.MAX_SAFE_INTEGER) {
+    const phoneFilter = phone ? ' AND phone = ?' : '';
+    const parameters = phone ? [session, phone, before, limit] : [session, before, limit];
     return this.database.prepare(`SELECT message_id AS messageId, session, phone, direction,
       message_type AS messageType, text, content, media_path IS NOT NULL AS hasMedia,
       message_at AS messageAt, stored_at AS storedAt
       FROM monitored_messages
-      WHERE session = ? AND phone = ? AND message_at < ?
-      ORDER BY message_at DESC, message_id DESC LIMIT ?`).all(session, phone, before, limit)
+      WHERE session = ?${phoneFilter} AND message_at < ?
+      ORDER BY message_at DESC, message_id DESC LIMIT ?`).all(...parameters)
       .map((row) => ({ ...row, hasMedia: Boolean(row.hasMedia), content: JSON.parse(row.content) }));
   }
 

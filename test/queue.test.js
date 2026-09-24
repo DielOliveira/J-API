@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import Database from 'better-sqlite3';
 import { PersistentSendQueue } from '../src/queue.js';
 import { QueueStore } from '../src/queue-store.js';
 
@@ -167,8 +168,9 @@ test('message monitors and captured messages are persistent and deduplicated', a
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const databasePath = path.join(root, 'queue.sqlite');
   let store = new QueueStore(databasePath);
-  assert.equal(store.getMessageMonitor('default'), null);
+  assert.deepEqual(store.getMessageMonitors('default'), []);
   store.setMessageMonitor('default', '5562999999999', 100);
+  store.setMessageMonitor('default', '5562888888888', 101);
   const message = {
     session: 'default', messageId: 'wa-1', phone: '5562999999999', direction: 'received',
     messageType: 'conversation', text: 'Olá', content: { text: 'Olá' }, messageAt: 200, storedAt: 201
@@ -178,7 +180,7 @@ test('message monitors and captured messages are persistent and deduplicated', a
   store.close();
 
   store = new QueueStore(databasePath);
-  assert.equal(store.getMessageMonitor('default').phone, '5562999999999');
+  assert.deepEqual(store.getMessageMonitors('default').map((monitor) => monitor.phone), ['5562999999999', '5562888888888']);
   assert.deepEqual(store.listMonitoredMessages('default', '5562999999999'), [{
     messageId: 'wa-1', session: 'default', phone: '5562999999999', direction: 'received',
     messageType: 'conversation', text: 'Olá', content: { text: 'Olá' }, hasMedia: false, messageAt: 200, storedAt: 201
@@ -186,7 +188,24 @@ test('message monitors and captured messages are persistent and deduplicated', a
   assert.equal(store.attachMonitoredMedia('default', 'wa-1', { path: '/private/photo.jpg', mime: 'image/jpeg', size: 321 }), true);
   assert.deepEqual(store.monitoredMessageMedia('default', 'wa-1'), { path: '/private/photo.jpg', mime: 'image/jpeg', size: 321 });
   assert.equal(store.listMonitoredMessages('default', '5562999999999')[0].hasMedia, true);
-  assert.equal(store.removeMessageMonitor('default'), true);
-  assert.equal(store.getMessageMonitor('default'), null);
+  assert.equal(store.removeMessageMonitor('default', '5562999999999'), true);
+  assert.deepEqual(store.getMessageMonitors('default').map((monitor) => monitor.phone), ['5562888888888']);
+  store.close();
+});
+
+test('legacy single-number monitor is migrated without data loss', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'j-api-monitor-migration-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const databasePath = path.join(root, 'queue.sqlite');
+  const database = new Database(databasePath);
+  database.exec(`CREATE TABLE message_monitors (
+    session TEXT PRIMARY KEY, phone TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  )`);
+  database.prepare('INSERT INTO message_monitors VALUES (?, ?, ?, ?)').run('default', '5562999999999', 10, 11);
+  database.close();
+  const store = new QueueStore(databasePath);
+  assert.deepEqual(store.getMessageMonitors('default').map((monitor) => monitor.phone), ['5562999999999']);
+  store.setMessageMonitor('default', '5562888888888', 12);
+  assert.equal(store.getMessageMonitors('default').length, 2);
   store.close();
 });

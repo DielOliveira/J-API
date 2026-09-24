@@ -104,11 +104,15 @@ export class WhatsAppClient {
   }
 
   async #storeMessages(socket, messages) {
-    const monitor = this.store.getMessageMonitor(this.session);
-    if (!monitor) return;
+    const monitors = this.store.getMessageMonitors(this.session);
+    if (monitors.length === 0) return;
     for (const message of messages) {
       try {
-        const record = await monitoredMessage(socket, message, monitor, this.session);
+        let record = null;
+        for (const monitor of monitors) {
+          record = await monitoredMessage(socket, message, monitor, this.session);
+          if (record) break;
+        }
         if (record && this.store.saveMonitoredMessage(record)) {
           this.logger.info(`[monitor]${this.logPrefix} stored direction=${record.direction} id=${record.messageId}`);
           if (record.messageType === 'imageMessage') await this.#storeImage(socket, message, record);

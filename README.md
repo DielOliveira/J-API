@@ -228,9 +228,9 @@ Cada sessão tem sua própria fila: um envio lento em `financeiro` não bloqueia
 
 ## Monitorar uma conversa
 
-Cada sessão pode monitorar um número individual. Somente mensagens novas observadas depois da ativação são armazenadas; mensagens de grupos e sincronizações retroativas de histórico são ignoradas.
+Cada sessão pode monitorar vários números individuais. Somente mensagens novas observadas depois da ativação são armazenadas; mensagens de grupos e sincronizações retroativas de histórico são ignoradas.
 
-Ative ou troque o número monitorado:
+Adicione um número monitorado repetindo a chamada para cada contato:
 
 ```bash
 curl -X PUT http://127.0.0.1:3001/sessions/default/message-monitor \
@@ -245,9 +245,10 @@ curl http://127.0.0.1:3001/sessions/default/message-monitor
 curl 'http://127.0.0.1:3001/sessions/default/messages?limit=100'
 ```
 
-Para paginação, passe `before` com o `messageAt` (timestamp em milissegundos) mais antigo já recebido. Para parar de capturar, sem apagar o que já foi armazenado:
+Para paginação, passe `before` com o `messageAt` (timestamp em milissegundos) mais antigo já recebido. Use `?phone=5562999999999` para filtrar um contato. Para remover um único número ou parar todos, sem apagar o que já foi armazenado:
 
 ```bash
+curl -X DELETE http://127.0.0.1:3001/sessions/default/message-monitor/5562999999999
 curl -X DELETE http://127.0.0.1:3001/sessions/default/message-monitor
 ```
 
