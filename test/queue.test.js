@@ -24,6 +24,11 @@ async function eventually(check, timeout = 1000) {
 }
 
 test('persistent queue sends in order and survives store reads', async (t) => {
+  // Distinct timestamps make the FIFO fixture deterministic; equal timestamps
+  // are resolved by the existing UUID tie-breaker, not insertion order.
+  const epoch = Date.now();
+  let tick = 0;
+  t.mock.method(Date, 'now', () => epoch + tick++);
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'j-api-queue-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const store = new QueueStore(path.join(root, 'queue.sqlite'));
