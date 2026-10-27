@@ -5,6 +5,16 @@ import { WhatsAppClient } from './whatsapp.js';
 
 const SESSION_ID = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 
+export async function sendQueuedDocument(job, payload, whatsapp) {
+  const filePath = job.type === 'pdf' ? payload.pdfPath : payload.filePath;
+  let messageId;
+  if (job.type === 'pdf') messageId = await whatsapp.sendPdf(job.phone, { realPath: filePath }, payload.filename, payload.caption);
+  else if (job.type === 'xlsx') messageId = await whatsapp.sendXlsx(job.phone, { realPath: filePath }, payload.filename, payload.caption);
+  else throw new Error('unsupported queued document type');
+  await fs.unlink(filePath).catch(() => {});
+  return messageId;
+}
+
 export function validateSessionId(id) {
   if (typeof id !== 'string' || !SESSION_ID.test(id)) {
     throw new Error('session must use 1-32 lowercase letters, digits, underscores or hyphens');
@@ -74,11 +84,7 @@ export class SessionManager {
     const send = async (job, payload) => {
       if (job.type === 'text') return whatsapp.sendText(job.phone, payload.message);
       if (job.type === 'pix') return whatsapp.sendPix(job.phone, payload.message, payload.pix, payload.merchantName, payload.keyType);
-      if (job.type === 'pdf') {
-        const messageId = await whatsapp.sendPdf(job.phone, { realPath: payload.pdfPath }, payload.filename, payload.caption);
-        await fs.unlink(payload.pdfPath).catch(() => {});
-        return messageId;
-      }
+      if (job.type === 'pdf' || job.type === 'xlsx') return sendQueuedDocument(job, payload, whatsapp);
       throw new Error(`unsupported queued message type: ${job.type}`);
     };
     const entry = { whatsapp, queue: new PersistentSendQueue({

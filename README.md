@@ -1,6 +1,6 @@
 # Local WhatsApp Service
 
-Serviço HTTP pequeno, multi-sessão e restrito a `127.0.0.1`, para envio de texto, PIX e PDF pelo WhatsApp. Usa [Baileys](https://github.com/WhiskeySockets/Baileys) e uma fila persistente SQLite, sem navegador headless, Redis ou Docker. Pode monitorar uma conversa individual por sessão e persistir suas mensagens novas.
+Serviço HTTP pequeno, multi-sessão e restrito a `127.0.0.1`, para envio de texto, PIX, PDF e Excel XLSX pelo WhatsApp. Usa [Baileys](https://github.com/WhiskeySockets/Baileys) e uma fila persistente SQLite, sem navegador headless, Redis ou Docker. Pode monitorar uma conversa individual por sessão e persistir suas mensagens novas.
 
 > **Aviso:** Baileys usa o protocolo do WhatsApp Web e não é uma API oficial da Meta. Mudanças no WhatsApp podem interromper o serviço e o uso automatizado pode ter implicações nos termos/políticas da plataforma. Não use para spam; obtenha consentimento dos destinatários. Para garantias comerciais, considere a WhatsApp Business Platform oficial.
 
@@ -174,6 +174,33 @@ curl -sS -X POST http://127.0.0.1:3001/send-pix \
 ```
 
 Para outra sessão, use `POST /sessions/financeiro/send-pix` com o mesmo JSON. O cartão depende do protocolo não oficial do WhatsApp Web e deve ser testado nos aparelhos usados. Alguns clientes, especialmente o WhatsApp Web, podem não renderizar mensagens interativas enviadas por dispositivos vinculados.
+
+## Enviar Excel XLSX
+
+O mesmo endpoint `send-file` aceita planilhas `.xlsx` por caminho local dentro de
+`ALLOWED_FILE_PATHS`, inclusive em sessões nomeadas. Exemplo sem dados reais:
+
+```json
+{
+  "phone": "5562999999999",
+  "path": "/var/www/minha-app/storage/whatsapp/relatorio.xlsx",
+  "filename": "relatorio.xlsx",
+  "caption": "Segue o relatório."
+}
+```
+
+O conteúdo precisa ser identificado como XLSX real, com MIME
+`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`.
+PDF, ZIP genérico ou outros documentos renomeados para `.xlsx` são rejeitados.
+O limite existente `MAX_PDF_SIZE_MB` aplica-se também ao XLSX, preservando a
+configuração atual. XLSX por URL não é aceito; downloads externos continuam
+exclusivamente PDF com HTTPS e lista de hosts permitidos.
+
+A fila persiste jobs de tipo `xlsx` e uma cópia privada `.xlsx` com permissão
+`600`, removida apenas depois do envio bem-sucedido. Reinícios e falhas temporárias
+preservam a cópia; a chave idempotente é isolada por sessão, como nos PDFs.
+Jobs PDF existentes preservam o tipo e o payload originais. O envio ao WhatsApp usa
+documento nativo com MIME de Excel, nome `.xlsx` e legenda opcional.
 
 ## Enviar PDF
 

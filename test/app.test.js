@@ -1,22 +1,30 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createApp } from '../src/app.js';
+import { xlsxBuffer } from './fixtures/xlsx.js';
 const quietLogger = { info() {}, error() {} };
 
-async function withServer(whatsapp, run, { initialBlocked = [] } = {}) {
+async function withServer(whatsapp, run, { initialBlocked = [], config: extraConfig = {}, acceptedJobs = [] } = {}) {
   let sequence = 0;
   const jobs = new Map();
+  const idempotent = new Map();
   const blockedRecipients = new Map(initialBlocked.map((recipient) => [recipient.phone, recipient]));
   const monitors = new Map();
   const monitoredMessages = [];
   const queue = {
     size: 0,
     blockedRecipient: (phone) => blockedRecipients.get(phone) ?? null,
-    add: ({ type, phone }) => {
+    add: ({ type, phone, payload, idempotencyKey }) => {
+      if (idempotencyKey && idempotent.has(idempotencyKey)) return { job: idempotent.get(idempotencyKey), duplicate: true };
       const blockedRecipient = blockedRecipients.get(phone);
       if (blockedRecipient) return { blocked: true, blockedRecipient, duplicate: false };
       const job = { id: `job-${++sequence}`, status: 'pending', type };
       jobs.set(job.id, job);
+      if (idempotencyKey) idempotent.set(idempotencyKey, job);
+      acceptedJobs.push({ ...job, payload });
       return { job, duplicate: false };
     },
     get: (id) => jobs.get(id) ?? null,
@@ -48,7 +56,7 @@ async function withServer(whatsapp, run, { initialBlocked = [] } = {}) {
     store,
     config: {
       bodyLimit: '2kb', allowedFilePaths: ['/tmp/allowed'], allowedDownloadHosts: ['example.com'],
-      maxPdfBytes: 1024, queueFilesPath: '/tmp/j-api-test-queue-files', messageMediaPath: '/tmp/j-api-test-message-media'
+      maxPdfBytes: 1024, queueFilesPath: '/tmp/j-api-test-queue-files', messageMediaPath: '/tmp/j-api-test-message-media', ...extraConfig
     },
     logger: quietLogger
   });
@@ -71,6 +79,39 @@ test('status and QR endpoints expose only public state', async () => {
     });
     assert.equal((await (await fetch(`${base}/qr`)).json()).required, true);
   });
+});
+
+test('send-file stages XLSX once per idempotency key and keeps PDF jobs compatible', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wa-api-xlsx-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const source = path.join(root, 'report.xlsx');
+  const pdf = path.join(root, 'report.pdf');
+  await fs.writeFile(source, xlsxBuffer());
+  await fs.writeFile(pdf, '%PDF-1.4\n%%EOF\n');
+  const acceptedJobs = [];
+  await withServer({ status: () => ({}), qr: () => ({}) }, async (base) => {
+    const send = (body, key) => fetch(`${base}/send-file`, {
+      method: 'POST', headers: { 'content-type': 'application/json', 'Idempotency-Key': key },
+      body: JSON.stringify({ phone: '5562999999999', caption: 'Simulação', ...body })
+    });
+    const first = await send({ path: source, filename: 'report.xlsx' }, 'xlsx-1');
+    assert.equal(first.status, 202);
+    const original = await first.json();
+    const duplicate = await send({ path: source, filename: 'report.xlsx' }, 'xlsx-1');
+    assert.equal(duplicate.status, 200);
+    assert.equal((await duplicate.json()).jobId, original.jobId);
+    assert.equal(acceptedJobs.length, 1);
+    assert.equal(acceptedJobs[0].type, 'xlsx');
+    const staged = acceptedJobs[0].payload.filePath;
+    assert.notEqual(staged, source);
+    assert.deepEqual(await fs.readFile(staged), await fs.readFile(source));
+    assert.equal((await fs.readdir(path.join(root, 'queue'))).length, 1);
+    assert.equal((await send({ path: pdf, filename: 'report.pdf' }, 'pdf-1')).status, 202);
+    assert.equal(acceptedJobs[1].type, 'pdf');
+    assert.match(acceptedJobs[1].payload.pdfPath, /\.pdf$/);
+    assert.equal((await send({ path: pdf, filename: 'fake.xlsx' }, 'invalid')).status, 422);
+    assert.equal((await send({ url: 'https://example.com/report.xlsx', filename: 'report.xlsx' }, 'url')).status, 422);
+  }, { acceptedJobs, config: { allowedFilePaths: [root], maxPdfBytes: 20000, queueFilesPath: path.join(root, 'queue') } });
 });
 
 test('queue admin panel is served with restrictive browser security headers', async () => {

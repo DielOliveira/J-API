@@ -3,11 +3,13 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileTypeFromBuffer, fileTypeFromFile } from 'file-type';
 
+export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
 export function sanitizeFilename(value) {
   if (typeof value !== 'string' || value.trim() === '') throw new Error('filename is required');
   const clean = path.basename(value.trim()).replace(/[^a-zA-Z0-9._ -]/g, '_').replace(/^\.+/, '');
-  if (!clean || clean.length > 180 || path.extname(clean).toLowerCase() !== '.pdf') {
-    throw new Error('filename must be a valid .pdf name');
+  if (!clean || clean.length > 180 || !['.pdf', '.xlsx'].includes(path.extname(clean).toLowerCase())) {
+    throw new Error('filename must be a valid .pdf or .xlsx name');
   }
   return clean;
 }
@@ -17,7 +19,7 @@ function isWithin(file, root) {
   return relative !== '' && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative);
 }
 
-export async function validatePdfFile(inputPath, allowedRoots, maxBytes) {
+async function validateLocalDocument(inputPath, allowedRoots, maxBytes, kind) {
   if (typeof inputPath !== 'string' || !path.isAbsolute(inputPath)) {
     throw new Error('path must be an absolute file path');
   }
@@ -26,25 +28,34 @@ export async function validatePdfFile(inputPath, allowedRoots, maxBytes) {
   try {
     realFile = await fs.realpath(inputPath);
   } catch {
-    throw new Error('PDF file does not exist or is not accessible');
+    throw new Error('document file does not exist or is not accessible');
   }
 
   const realRoots = await Promise.all(allowedRoots.map(async (root) => {
     try { return await fs.realpath(root); } catch { return path.resolve(root); }
   }));
   if (!realRoots.some((root) => isWithin(realFile, root))) {
-    throw new Error('PDF path is outside ALLOWED_FILE_PATHS');
+    throw new Error('document path is outside ALLOWED_FILE_PATHS');
   }
 
   const stat = await fs.stat(realFile);
-  if (!stat.isFile()) throw new Error('PDF path is not a regular file');
-  if (stat.size <= 0 || stat.size > maxBytes) throw new Error('PDF file size is outside the allowed range');
+  if (!stat.isFile()) throw new Error('document path is not a regular file');
+  if (stat.size <= 0 || stat.size > maxBytes) throw new Error('document file size is outside the allowed range');
 
   const type = await fileTypeFromFile(realFile);
-  if (!type || type.mime !== 'application/pdf' || type.ext !== 'pdf') {
-    throw new Error('file content is not a PDF');
+  const mime = kind === 'xlsx' ? XLSX_MIME : 'application/pdf';
+  if (!type || type.mime !== mime || type.ext !== kind) {
+    throw new Error(`file content is not a valid ${kind.toUpperCase()}`);
   }
   return { realPath: realFile, size: stat.size };
+}
+
+export async function validatePdfFile(inputPath, allowedRoots, maxBytes) {
+  return validateLocalDocument(inputPath, allowedRoots, maxBytes, 'pdf');
+}
+
+export async function validateXlsxFile(inputPath, allowedRoots, maxBytes) {
+  return validateLocalDocument(inputPath, allowedRoots, maxBytes, 'xlsx');
 }
 
 export function validateDownloadUrl(value, allowedHosts) {
@@ -95,8 +106,13 @@ export async function downloadPdf(inputUrl, allowedHosts, maxBytes, redirects = 
 }
 
 export async function stagePdf(pdf, queueFilesPath) {
+  return stageDocument(pdf, queueFilesPath, 'pdf');
+}
+
+export async function stageDocument(pdf, queueFilesPath, kind) {
+  if (!['pdf', 'xlsx'].includes(kind)) throw new Error('unsupported document type');
   await fs.mkdir(queueFilesPath, { recursive: true, mode: 0o700 });
-  const destination = path.join(queueFilesPath, `${randomUUID()}.pdf`);
+  const destination = path.join(queueFilesPath, `${randomUUID()}.${kind}`);
   if (pdf.buffer) await fs.writeFile(destination, pdf.buffer, { mode: 0o600, flag: 'wx' });
   else await fs.copyFile(pdf.realPath, destination, fs.constants.COPYFILE_EXCL);
   await fs.chmod(destination, 0o600);

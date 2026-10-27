@@ -268,10 +268,18 @@ export class WhatsAppClient {
   }
 
   async sendPdf(phone, pdf, filename, caption) {
+    return this.#sendDocument(phone, pdf, filename, caption, 'application/pdf');
+  }
+
+  async sendXlsx(phone, xlsx, filename, caption) {
+    return this.#sendDocument(phone, xlsx, filename, caption, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  }
+
+  async #sendDocument(phone, pdf, filename, caption, mimetype) {
     const socket = this.#readySocket();
     const result = await socket.sendMessage(await this.#recipientJid(phone), {
       document: pdf.buffer ?? { url: pdf.realPath },
-      mimetype: 'application/pdf',
+      mimetype,
       fileName: filename,
       ...(caption ? { caption } : {})
     });

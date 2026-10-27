@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { sanitizeFilename, validateDownloadUrl, validatePdfFile } from '../src/files.js';
+import { sanitizeFilename, validateDownloadUrl, validatePdfFile, validateXlsxFile, stageDocument } from '../src/files.js';
+import { xlsxBuffer, zipBuffer } from './fixtures/xlsx.js';
 
 test('filename is reduced to a safe PDF basename', () => {
   assert.equal(sanitizeFilename('../../fatura ç.pdf'), 'fatura _.pdf');
@@ -39,4 +40,33 @@ test('download URL validation requires HTTPS and an allowed host', () => {
   );
   assert.throws(() => validateDownloadUrl('http://public-api-pay.lytex.com.br/file', hosts), /HTTPS/);
   assert.throws(() => validateDownloadUrl('https://127.0.0.1/file', hosts), /allowed/);
+});
+
+test('XLSX requires actual spreadsheet content and preserves the private staged copy', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wa-xlsx-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const source = path.join(root, 'report.xlsx');
+  await fs.writeFile(source, xlsxBuffer());
+  assert.equal(sanitizeFilename('../../relatorio ç.xlsx'), 'relatorio _.xlsx');
+  assert.throws(() => sanitizeFilename('macros.xlsm'), /valid/);
+  const validated = await validateXlsxFile(source, [root], 20000);
+  const staged = await stageDocument(validated, path.join(root, 'queue'), 'xlsx');
+  assert.match(staged, /\.xlsx$/);
+  assert.deepEqual(await fs.readFile(staged), await fs.readFile(source));
+  assert.equal((await fs.stat(staged)).mode & 0o777, 0o600);
+  await assert.rejects(validateXlsxFile(source, [root], 10), /size/);
+  await assert.rejects(validatePdfFile(source, [root], 20000), /PDF/);
+  await fs.writeFile(source, '%PDF-1.4\n%%EOF\n');
+  await assert.rejects(validateXlsxFile(source, [root], 20000), /XLSX/);
+  await fs.writeFile(source, zipBuffer({ 'readme.txt': 'not a spreadsheet' }));
+  await assert.rejects(validateXlsxFile(source, [root], 20000), /XLSX/);
+});
+
+test('XLSX blocks symlink escape from the allowed directory', async (t) => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'wa-xlsx-link-'));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  await fs.mkdir(path.join(root, 'allowed'));
+  await fs.writeFile(path.join(root, 'outside.xlsx'), xlsxBuffer());
+  await fs.symlink(path.join(root, 'outside.xlsx'), path.join(root, 'allowed', 'link.xlsx'));
+  await assert.rejects(validateXlsxFile(path.join(root, 'allowed', 'link.xlsx'), [path.join(root, 'allowed')], 20000), /outside/);
 });

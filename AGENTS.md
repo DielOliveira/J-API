@@ -21,6 +21,15 @@
 
 ## Validação
 
+- `send-file` aceita PDF e XLSX reais por caminho local, com confinamento por
+  `realpath` e `ALLOWED_FILE_PATHS`, limite `MAX_PDF_SIZE_MB` e validação do MIME
+  correspondente ao nome solicitado. XLSX por URL não é aceito; preservar o fluxo
+  HTTPS/hosts permitidos dos PDFs e os jobs/payloads PDF legados.
+- XLSX usa tipo de job `xlsx`, cópia privada `.xlsx` na fila com permissão `600`,
+  chave idempotente por sessão e envio nativo com MIME de Excel. Preservar a cópia
+  em falhas/reinícios e removê-la apenas após envio bem-sucedido. Não renomear
+  planilha como PDF, aceitar ZIP genérico nem expor novos diretórios/portas.
+
 ```bash
 npm run check
 npm audit --omit=dev

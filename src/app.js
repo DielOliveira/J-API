@@ -2,7 +2,7 @@ import express from 'express';
 import fs from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { queueAdminPage } from './admin.js';
-import { downloadPdf, sanitizeFilename, stagePdf, validateDownloadUrl, validatePdfFile } from './files.js';
+import { downloadPdf, sanitizeFilename, stageDocument, validateDownloadUrl, validatePdfFile, validateXlsxFile } from './files.js';
 import { validateSessionId } from './sessions.js';
 
 const PHONE_PATTERN = /^[1-9]\d{9,14}$/;
@@ -200,27 +200,29 @@ export function createApp({ sessions, store = sessions.store, config, logger = c
         return accepted(response, id, { blocked: true });
       }
       const filename = sanitizeFilename(request.body?.filename);
+      const kind = filename.toLowerCase().endsWith('.xlsx') ? 'xlsx' : 'pdf';
       const caption = validateMessage(request.body?.caption, 'caption', { optional: true });
       const hasPath = typeof request.body?.path === 'string' && request.body.path !== '';
       const hasUrl = typeof request.body?.url === 'string' && request.body.url !== '';
       if (hasPath === hasUrl) throw new Error('provide exactly one of path or url');
+      if (kind === 'xlsx' && hasUrl) throw new Error('XLSX requires a local path inside ALLOWED_FILE_PATHS');
       const source = hasPath
-        ? await validatePdfFile(request.body.path, config.allowedFilePaths, config.maxPdfBytes)
+        ? await (kind === 'xlsx' ? validateXlsxFile : validatePdfFile)(request.body.path, config.allowedFilePaths, config.maxPdfBytes)
         : await downloadPdf(
           validateDownloadUrl(request.body.url, config.allowedDownloadHosts).href,
           config.allowedDownloadHosts,
           config.maxPdfBytes
         );
-      const pdfPath = await stagePdf(source, config.queueFilesPath);
+      const filePath = await stageDocument(source, config.queueFilesPath, kind);
       try {
         const result = queue.add({
-          type: 'pdf', phone, payload: { pdfPath, filename, caption }, idempotencyKey: idempotencyKey(request)
+          type: kind, phone, payload: { ...(kind === 'pdf' ? { pdfPath: filePath } : { filePath }), filename, caption }, idempotencyKey: idempotencyKey(request)
         });
-        if (result.duplicate || result.blocked) await fs.unlink(pdfPath).catch(() => {});
-        logAccepted(logger, id, 'pdf', result, queue);
+        if (result.duplicate || result.blocked) await fs.unlink(filePath).catch(() => {});
+        logAccepted(logger, id, kind, result, queue);
         accepted(response, id, result);
       } catch (error) {
-        await fs.unlink(pdfPath).catch(() => {});
+        await fs.unlink(filePath).catch(() => {});
         throw error;
       }
     } catch (error) { next(error); }

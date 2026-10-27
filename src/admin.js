@@ -147,7 +147,7 @@ export function queueAdminPage(nonce) {
   <script nonce="${nonce}">
     const state = { jobs: [], sessions: [], blockedRecipients: [], messages: [], monitors: [], loading: false, monitorLoading: false, qrTimer: null };
     const byId = (id) => document.getElementById(id);
-    const labels = { pending:'Pendente', processing:'Processando', sent:'Enviada', failed:'Falha', text:'Texto', pix:'PIX', pdf:'PDF' };
+    const labels = { pending:'Pendente', processing:'Processando', sent:'Enviada', failed:'Falha', text:'Texto', pix:'PIX', pdf:'PDF', xlsx:'Excel' };
     const maskPhone = (phone) => phone.length < 8 ? '••••' : phone.slice(0,4) + '•••••' + phone.slice(-4);
     const date = (value) => value ? new Intl.DateTimeFormat('pt-BR',{dateStyle:'short',timeStyle:'medium'}).format(new Date(value)) : '—';
     const localDateValue = (value=new Date()) => { const offset=value.getTimezoneOffset()*60000; return new Date(value.getTime()-offset).toISOString().slice(0,10); };
